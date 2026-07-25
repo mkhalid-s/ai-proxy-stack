@@ -128,6 +128,53 @@ if curl -fsS --max-time 1 "http://127.0.0.1:$PORT/livez" >/dev/null 2>&1; then
   exit 1
 fi
 
+mkdir -p "$APX_STATE/logs"
+printf 'old line
+new line
+' > "$APX_STATE/logs/gateway.log"
+if [[ "$("$APX" logs gateway --tail 1 --no-follow)" != "new line" ]]; then
+  echo "ERROR: logs --tail/--no-follow did not return the expected gateway tail" >&2
+  exit 1
+fi
+if "$APX" logs gateway --tail nope --no-follow >/dev/null 2>&1; then
+  echo "ERROR: logs accepted a non-numeric --tail value" >&2
+  exit 1
+fi
+
+if [[ "$("$APX" debug level get)" != "APX_LOG_LEVEL=info" ]]; then
+  echo "ERROR: debug level get did not default to info" >&2
+  exit 1
+fi
+"$APX" debug level set debug --no-restart >/dev/null
+grep -q '^APX_LOG_LEVEL=debug$' "$APX_CONFIG"
+if [[ "$("$APX" debug level get)" != "APX_LOG_LEVEL=debug" ]]; then
+  echo "ERROR: debug level set did not persist" >&2
+  exit 1
+fi
+if "$APX" debug level set verbose --no-restart >/dev/null 2>&1; then
+  echo "ERROR: debug level accepted an invalid level" >&2
+  exit 1
+fi
+
+cat >> "$APX_CONFIG" <<'EOF_SECRET'
+ANTHROPIC_API_KEY=sk-test-secret
+APX_DASHBOARD_TOKEN=dashboard-secret
+EOF_SECRET
+printf 'authorization=Bearer log-secret
+plain line
+' > "$APX_STATE/logs/gateway.log"
+support_bundle="$TMP/apx-support.tgz"
+"$APX" support-bundle --output "$support_bundle" --tail 5 >/dev/null
+tar -tzf "$support_bundle" | grep -q './config/config.env.redacted'
+support_extract="$TMP/support-extract"
+mkdir -p "$support_extract"
+tar -xzf "$support_bundle" -C "$support_extract"
+if grep -R 'sk-test-secret\|dashboard-secret\|log-secret' "$support_extract" >/dev/null 2>&1; then
+  echo "ERROR: support bundle leaked a configured or logged secret" >&2
+  exit 1
+fi
+grep -R 'REDACTED' "$support_extract" >/dev/null
+
 PX_ALT_PORT="$($PYTHON3 - <<'PYPORT'
 import socket
 s = socket.socket()
@@ -161,15 +208,21 @@ cat > "$TMP/update-stubs/curl" <<'SH'
 #!/usr/bin/env bash
 out=""
 url=""
+write_format=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -o) out="$2"; shift 2 ;;
+    -w) write_format="$2"; shift 2 ;;
     --max-time) shift 2 ;;
     -*) shift ;;
     *) url="$1"; shift ;;
   esac
 done
 printf '%s\n' "$url" >> "$HOME/update.urls"
+if [[ "$out" == "/dev/null" && -n "$write_format" ]]; then
+  printf '%s' 'https://github.com/mkhalid-s/lean-relay/releases/tag/v0.5.0'
+  exit 0
+fi
 case "$out" in
   *apx.sh)
     cat > "$out" <<'APXSH'
@@ -201,6 +254,27 @@ APX_RELEASE_ASSET_URL='https://github.com/mkhalid-s/lean-relay\/releases\/latest
   "$APX" update --to v0.5.0 --dry-run >/dev/null
 grep -qx 'https://github.com/mkhalid-s/lean-relay/releases/download/v0.5.0/apx.sh' "$HOME/update.urls"
 grep -qx 'https://github.com/mkhalid-s/lean-relay/releases/download/v0.5.0/apx.sh.sha256' "$HOME/update.urls"
+APX_PATH="$TMP/update-stubs:$PATH" "$APX" check-updates > "$HOME/check-updates.out"
+if ! grep -q 'latest version:    0.5.0' "$HOME/check-updates.out"   || ! grep -q 'update status:     update available' "$HOME/check-updates.out"; then
+  echo "ERROR: check-updates did not report latest release availability" >&2
+  cat "$HOME/check-updates.out" >&2
+  cat "$HOME/update.urls" >&2
+  exit 1
+fi
+APX_PATH="$TMP/update-stubs:$PATH" "$APX" version > "$HOME/version.out"
+if ! grep -q 'latest version:    0.5.0' "$HOME/version.out"   || ! grep -q 'run:               apx update --to v0.5.0' "$HOME/version.out"; then
+  echo "ERROR: version did not report latest release availability" >&2
+  cat "$HOME/version.out" >&2
+  cat "$HOME/update.urls" >&2
+  exit 1
+fi
+APX_PATH="$TMP/update-stubs:$PATH" "$APX" status > "$HOME/status-update.out"
+if ! grep -q 'log level: debug' "$HOME/status-update.out"   || ! grep -q 'update status:     update available' "$HOME/status-update.out"; then
+  echo "ERROR: status did not report log level and latest release availability" >&2
+  cat "$HOME/status-update.out" >&2
+  cat "$HOME/update.urls" >&2
+  exit 1
+fi
 rm -f "$HOME/update.urls"
 rm -f "$HOME/.local/share/apx/current"
 rm -rf "$HOME/.local/share/apx/versions"
@@ -284,5 +358,64 @@ grep -q 'APX_CLIENT_TOPOLOGY=docker-host' "$APX_CONFIG"
 grep -q 'host.docker.internal' "$HOME/.claude/settings.json"
 "$APX" mode direct --no-restart >/dev/null
 grep -q 'host.docker.internal' "$HOME/.claude/settings.json"
+
+release_repo="$TMP/release-helper"
+mkdir -p "$release_repo/build"
+cp "$ROOT/build/release.sh" "$release_repo/build/release.sh"
+cat > "$release_repo/VERSION" <<'EOF_VERSION'
+1.2.3
+EOF_VERSION
+cat > "$release_repo/CHANGELOG.md" <<'EOF_CHANGELOG'
+# Changelog
+
+## [Unreleased]
+
+### Fixed
+
+- Test release note.
+
+## [1.2.3] - 2026-07-01
+EOF_CHANGELOG
+(
+  cd "$release_repo"
+  git init -q
+  git checkout -q -b main 2>/dev/null || git branch -m main
+  git config user.email 'mkhalid-s@users.noreply.github.com'
+  git config user.name 'Khalid Shaikh'
+  git add VERSION CHANGELOG.md build/release.sh
+  git -c commit.gpgsign=false commit -q -m baseline
+  bash build/release.sh --patch --dry-run > "$TMP/release-dry-run.out"
+  grep -q 'version:      1.2.3 -> 1.2.4' "$TMP/release-dry-run.out"
+  [[ "$(head -n 1 VERSION)" == "1.2.3" ]]
+  ! git rev-parse -q --verify refs/tags/v1.2.4 >/dev/null
+)
+
+empty_release_repo="$TMP/release-helper-empty"
+mkdir -p "$empty_release_repo/build"
+cp "$ROOT/build/release.sh" "$empty_release_repo/build/release.sh"
+cat > "$empty_release_repo/VERSION" <<'EOF_VERSION'
+1.2.3
+EOF_VERSION
+cat > "$empty_release_repo/CHANGELOG.md" <<'EOF_CHANGELOG'
+# Changelog
+
+## [Unreleased]
+
+## [1.2.3] - 2026-07-01
+EOF_CHANGELOG
+(
+  cd "$empty_release_repo"
+  git init -q
+  git checkout -q -b main 2>/dev/null || git branch -m main
+  git config user.email 'mkhalid-s@users.noreply.github.com'
+  git config user.name 'Khalid Shaikh'
+  git add VERSION CHANGELOG.md build/release.sh
+  git -c commit.gpgsign=false commit -q -m baseline
+  if bash build/release.sh --patch --dry-run >/dev/null 2>&1; then
+    echo "ERROR: release helper allowed empty Unreleased notes without opt-in" >&2
+    exit 1
+  fi
+  bash build/release.sh --patch --dry-run --allow-empty-notes >/dev/null
+)
 
 echo lifecycle-ok

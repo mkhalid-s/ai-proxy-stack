@@ -6,6 +6,18 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `apx logs` now supports `--tail N` and `--no-follow` for bounded user diagnostics.
+- `apx debug level get|set info|debug|trace` persists runtime log verbosity in config and can restart the managed service.
+- `apx support-bundle` creates a redacted, metadata-only support tarball with config/status details and bounded log tails.
+- `build/release.sh` now supports `--patch`, `--minor`, `--major`, `--dry-run`, and an explicit `--allow-empty-notes` override.
+
+### Changed
+
+- Release-mode `apx version`, `apx status`, and `apx check-updates` now discover the latest GitHub Release and report whether an update is available.
+- `APX_LOG_LEVEL` is propagated to Gateway, Headroom, pxpipe, and Squeezr child processes, and Gateway now emits additional debug/trace request diagnostics when enabled.
+
 ## [0.5.3] - 2026-07-24
 
 ### Added

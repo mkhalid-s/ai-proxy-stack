@@ -34,6 +34,7 @@ METRICS_ENABLED = os.environ.get("APX_METRICS_ENABLED", "0") == "1"
 HISTORY_SIZE = int(os.environ.get("APX_HISTORY_SIZE", "500"))
 STATE_DIR = os.environ.get("APX_STATE_DIR", os.path.expanduser("~/.local/state/apx"))
 LOG_DIR = os.environ.get("APX_LOG_DIR", os.path.join(STATE_DIR, "logs"))
+LOG_LEVEL = (os.environ.get("APX_LOG_LEVEL", "info") or "info").strip().lower()
 CONFIG_FILE = os.environ.get("APX_CONFIG", os.path.expanduser("~/.config/apx/config.env"))
 PRICES_FILE = os.environ.get("APX_PRICES_FILE", os.path.join(os.path.dirname(CONFIG_FILE), "prices.env"))
 HEADROOM_URL = os.environ.get("APX_HEADROOM_URL", "http://127.0.0.1:8788").rstrip("/")
@@ -762,8 +763,24 @@ _HISTORY_FH_DATE: str | None = None
 _HISTORY_FH_LOCK = threading.Lock()
 
 
-def log(message: str) -> None:
-    print(f"[{time.strftime('%Y-%m-%dT%H:%M:%S%z')}] [apx-gateway] {message}", flush=True)
+_LOG_RANK = {"info": 1, "debug": 2, "trace": 3}
+
+
+def _should_log(level: str) -> bool:
+    return _LOG_RANK.get(LOG_LEVEL, 1) >= _LOG_RANK.get(level, 1)
+
+
+def log(message: str, level: str = "info") -> None:
+    if _should_log(level):
+        print(f"[{time.strftime('%Y-%m-%dT%H:%M:%S%z')}] [apx-gateway] {message}", flush=True)
+
+
+def log_debug(message: str) -> None:
+    log(message, "debug")
+
+
+def log_trace(message: str) -> None:
+    log(message, "trace")
 
 
 def _read_version() -> str:
@@ -2487,6 +2504,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         cfg_cache = _load_config_values()
         chain_mode = _current_mode(cfg_cache)
         chain_hops = ",".join(_chain_hops(cfg_cache, chain_mode))
+        log_debug(f"request start {self.command} {safe_path} -> {TARGET_URL} req_id={request_id} chain={chain_mode} hops={chain_hops or 'direct'}")
 
         # Capture request body/headers only if CAPTURE_LEVEL=full.
         cap_req_body = _capture_body(body, self.headers.get("content-type", ""))
@@ -2597,6 +2615,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 f"{self.command} {safe_path} -> {recorded_status} via {TARGET_URL} "
                 f"({int(elapsed_ms)}ms) req_id={request_id} session={session_id}"
             )
+            log_trace(f"response detail req_id={request_id} bytes_in={bytes_in} bytes_out={bytes_out} first_byte_ms={int(first_byte_ms)} stream={is_stream} err_class={err_class or 'none'}")
             _record_request(
                 self.command,
                 safe_path,
@@ -2726,7 +2745,8 @@ def main() -> int:
         f" auth={'token' if DASHBOARD_TOKEN else 'none'},"
         f" capture={CAPTURE_LEVEL},"
         f" metrics_db={'on' if METRICS.enabled else 'off'},"
-        f" history_persist={'on' if HISTORY_PERSIST else 'off'})"
+        f" history_persist={'on' if HISTORY_PERSIST else 'off'},"
+        f" log_level={LOG_LEVEL})"
     )
     try:
         httpd.serve_forever()

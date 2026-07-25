@@ -338,7 +338,7 @@ apx update
 
 or just rerun `./install.sh --yes` from the new clone.
 
-Releases are cut with `build/release.sh X.Y.Z --push --watch`, which updates `VERSION`, promotes the changelog's Unreleased notes, commits `Release X.Y.Z`, tags `vX.Y.Z`, pushes, and waits for the GitHub Release workflow. Every tagged build publishes both a source tarball and a self-extracting `apx.sh` (plus `apx.sh.sha256`) at [Releases](https://github.com/mkhalid-s/lean-relay/releases).
+Releases are cut with `build/release.sh X.Y.Z --push --watch` or `build/release.sh --patch|--minor|--major --push --watch`. The helper verifies identity, requires a clean `main`, promotes the changelog's Unreleased notes, updates `VERSION`, validates, commits `Release X.Y.Z`, tags `vX.Y.Z`, pushes, and waits for the GitHub Release workflow. Use `--dry-run` to preview the next release without modifying files; use `--allow-empty-notes` only for intentional metadata-only releases. Every tagged build publishes both a source tarball and a self-extracting `apx.sh` (plus `apx.sh.sha256`) at [Releases](https://github.com/mkhalid-s/lean-relay/releases).
 
 ## Claude Code Setting
 
@@ -523,9 +523,14 @@ Debug everything at once:
 
 ```bash
 apx logs all
+apx logs gateway --tail 200 --no-follow
+apx debug level get
+apx debug level set debug       # persists APX_LOG_LEVEL and restarts managed service
+apx debug level set trace --no-restart
+apx support-bundle --output apx-support.tgz --tail 300
 ```
 
-`logs headroom` follows both the stack-managed Headroom stdout log and Headroom's detailed proxy request log at `~/.headroom/logs/proxy.log`. Use `logs headroom.proxy` when you only want request/error details.
+`logs headroom` follows both the stack-managed Headroom stdout log and Headroom's detailed proxy request log at `~/.headroom/logs/proxy.log`. Use `logs headroom.proxy` when you only want request/error details. `APX_LOG_LEVEL` accepts `info`, `debug`, or `trace`; the value is propagated to Gateway, Headroom, pxpipe, and Squeezr child processes. `support-bundle` creates a metadata-only tarball with redacted config and log tails; it intentionally excludes request/response bodies, metrics databases, history JSONL, certs, and dependency caches.
 
 ## URLs
 

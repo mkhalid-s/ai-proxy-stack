@@ -7,6 +7,7 @@ cd "$ROOT"
 usage() {
   cat <<'EOF'
 Usage: build/release.sh VERSION [--push] [--watch] [--skip-tests]
+       build/release.sh --patch|--minor|--major [--push] [--watch] [--skip-tests]
 
 Prepare a LeanRelay/apx release from a clean main branch.
 
@@ -18,30 +19,51 @@ Steps:
   5. Commit "Release VERSION" and create tag "vVERSION".
   6. With --push, push main and the tag. With --watch, wait for release.yml.
 
+Options:
+  --patch|--minor|--major  Compute the next version from VERSION.
+  --dry-run                Print intended actions without modifying files.
+  --allow-empty-notes      Allow releasing with an empty Unreleased changelog.
+  --skip-tests             Skip lifecycle tests; still runs syntax/package checks.
+  --push                   Push main and the release tag.
+  --watch                  Push and wait for the release workflow.
+
 Identity defaults protect this repo's personal-account release flow:
   APX_RELEASE_GH_USER=mkhalid-s
   APX_RELEASE_EXPECT_EMAIL=mkhalid-s@users.noreply.github.com
 
 Examples:
-  build/release.sh 0.5.3
-  build/release.sh 0.5.3 --push --watch
+  build/release.sh --patch --push --watch
+  build/release.sh 0.5.4 --dry-run
 EOF
 }
 
 version=""
+bump=""
 push=0
 watch=0
 skip_tests=0
+dry_run=0
+allow_empty_notes=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --push) push=1 ;;
     --watch) watch=1; push=1 ;;
     --skip-tests) skip_tests=1 ;;
+    --dry-run) dry_run=1 ;;
+    --allow-empty-notes) allow_empty_notes=1 ;;
+    --patch|--minor|--major)
+      if [[ -n "$bump" || -n "$version" ]]; then
+        echo "error: pass exactly one VERSION or one bump flag" >&2
+        usage >&2
+        exit 2
+      fi
+      bump="${1#--}"
+      ;;
     -h|--help) usage; exit 0 ;;
     --*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     *)
-      if [[ -n "$version" ]]; then
-        echo "unexpected extra argument: $1" >&2
+      if [[ -n "$version" || -n "$bump" ]]; then
+        echo "error: pass exactly one VERSION or one bump flag" >&2
         usage >&2
         exit 2
       fi
@@ -51,12 +73,42 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+current_version="$(head -n 1 VERSION | tr -d '[:space:]')"
+if [[ -n "$bump" ]]; then
+  version="$(python3 - "$current_version" "$bump" <<'BUMP_PY'
+import re
+import sys
+current, bump = sys.argv[1:3]
+m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:[+-][A-Za-z0-9.]+)?", current)
+if not m:
+    raise SystemExit(f"VERSION must be semver-like X.Y.Z to use --{bump}: {current}")
+major, minor, patch = map(int, m.groups())
+if bump == "patch":
+    patch += 1
+elif bump == "minor":
+    minor += 1
+    patch = 0
+elif bump == "major":
+    major += 1
+    minor = 0
+    patch = 0
+else:
+    raise SystemExit(f"unknown bump: {bump}")
+print(f"{major}.{minor}.{patch}")
+BUMP_PY
+)"
+fi
+
 if [[ -z "$version" ]]; then
   usage >&2
   exit 2
 fi
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][A-Za-z0-9.]+)?$ ]]; then
   echo "error: VERSION must be semver-like X.Y.Z, got: $version" >&2
+  exit 2
+fi
+if [[ "$version" == "$current_version" ]]; then
+  echo "error: target version is already current: $version" >&2
   exit 2
 fi
 
@@ -87,7 +139,7 @@ if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   echo "error: local tag already exists: $tag" >&2
   exit 1
 fi
-if [[ "$push" == "1" ]]; then
+if [[ "$push" == "1" && "$dry_run" != "1" ]]; then
   if ! command -v gh >/dev/null 2>&1; then
     echo "error: --push requires GitHub CLI (gh)" >&2
     exit 1
@@ -104,15 +156,16 @@ if [[ "$push" == "1" ]]; then
   fi
 fi
 
-python3 - "$version" <<'CHANGELOG_PY'
+changelog_action="promote"
+[[ "$dry_run" == "1" ]] && changelog_action="check"
+python3 - "$version" "$changelog_action" "$allow_empty_notes" <<'CHANGELOG_PY'
 import datetime
 import re
 import sys
 from pathlib import Path
 
-version = sys.argv[1]
+version, action, allow_empty = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 root = Path.cwd()
-(root / "VERSION").write_text(version + "\n")
 path = root / "CHANGELOG.md"
 text = path.read_text()
 marker = "## [Unreleased]"
@@ -122,24 +175,44 @@ match = re.search(r"^## \[Unreleased\]\n(?P<body>.*?)(?=^## \[)", text, re.M | r
 if not match:
     raise SystemExit("could not parse CHANGELOG.md Unreleased section")
 body = match.group("body").strip()
-date = datetime.date.today().isoformat()
-release_heading = f"## [{version}] - {date}"
+if not body and not allow_empty:
+    raise SystemExit("CHANGELOG.md Unreleased section is empty; add notes or pass --allow-empty-notes")
 if re.search(rf"^## \[{re.escape(version)}\](?:\s|$)", text, re.M):
     raise SystemExit(f"CHANGELOG.md already contains release section for {version}")
+if action == "check":
+    print(f"[apx:release] changelog: {'non-empty' if body else 'empty allowed'} Unreleased section")
+    raise SystemExit(0)
+date = datetime.date.today().isoformat()
+release_heading = f"## [{version}] - {date}"
 if body:
     replacement = f"## [Unreleased]\n\n{release_heading}\n\n{body}\n\n"
 else:
     replacement = f"## [Unreleased]\n\n{release_heading}\n\n"
 text = text[:match.start()] + replacement + text[match.end():]
 path.write_text(text)
+(root / "VERSION").write_text(version + "\n")
 CHANGELOG_PY
 
+if [[ "$dry_run" == "1" ]]; then
+  echo "[apx:release] dry run"
+  echo "  version:      $current_version -> $version"
+  echo "  changelog:    promote Unreleased to [$version]"
+  echo "  commit:       Release $version"
+  echo "  tag:          $tag"
+  if [[ "$push" == "1" ]]; then
+    echo "  push:         origin main and $tag"
+  else
+    echo "  push:         no"
+  fi
+  exit 0
+fi
+
 run_validations() {
-  bash -n bin/apx get.sh bootstrap.sh install.sh tests/lifecycle.sh build/pack.sh build/header.sh
+  bash -n bin/apx get.sh bootstrap.sh install.sh tests/lifecycle.sh build/pack.sh build/header.sh build/release.sh
   python3 -m py_compile bin/apx-gateway
   git diff --check
   if command -v shellcheck >/dev/null 2>&1; then
-    shellcheck --severity=warning install.sh bootstrap.sh get.sh bin/apx bin/apx-squeezr build/pack.sh build/header.sh tests/lifecycle.sh
+    shellcheck --severity=warning install.sh bootstrap.sh get.sh bin/apx bin/apx-squeezr build/pack.sh build/header.sh tests/lifecycle.sh build/release.sh
   else
     echo "[apx:release] shellcheck not installed locally; release workflow will run it" >&2
   fi

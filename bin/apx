@@ -122,6 +122,7 @@ load_config() {
   : "${APX_SERVICE_BACKEND:=auto}"
   : "${APX_CLIENT_TOPOLOGY:=none}"
   : "${APX_CLIENT_BASE_URL:=}"
+  : "${APX_LOG_LEVEL:=info}"
   [[ -n "$APX_SERVICE_BACKEND_OVERRIDE" ]] && APX_SERVICE_BACKEND="$APX_SERVICE_BACKEND_OVERRIDE"
   [[ -n "$APX_CLIENT_BASE_URL_OVERRIDE" ]] && APX_CLIENT_BASE_URL="$APX_CLIENT_BASE_URL_OVERRIDE"
   [[ -n "$APX_CLIENT_TOPOLOGY_OVERRIDE" ]] && APX_CLIENT_TOPOLOGY="$APX_CLIENT_TOPOLOGY_OVERRIDE"
@@ -160,6 +161,27 @@ log() {
     printf '%s\n' "$line" >&2
   fi
 }
+
+log_level_rank() {
+  case "${1:-info}" in
+    trace) echo 3 ;;
+    debug) echo 2 ;;
+    info)  echo 1 ;;
+    *)     echo 1 ;;
+  esac
+}
+
+valid_log_level() {
+  case "$1" in info|debug|trace) return 0 ;; *) return 1 ;; esac
+}
+
+should_log() {
+  local want="$1" current="${APX_LOG_LEVEL:-info}"
+  (( $(log_level_rank "$current") >= $(log_level_rank "$want") ))
+}
+
+log_debug() { should_log debug && log "debug: $*" || true; }
+log_trace() { should_log trace && log "trace: $*" || true; }
 
 pid_alive() { [[ -n "${1:-}" ]] && kill -0 "$1" 2>/dev/null; }
 read_pid() { [[ -f "$1" ]] && tr -d '[:space:]' < "$1" || true; }
@@ -282,7 +304,7 @@ start_gateway() {
     export APX_METRICS_ENABLED="$APX_METRICS_ENABLED" APX_METRICS_DB="$APX_METRICS_DB" APX_METRICS_RETENTION_DAYS="$APX_METRICS_RETENTION_DAYS" APX_METRICS_BACKFILL="$APX_METRICS_BACKFILL"
     export APX_CAPTURE="$APX_CAPTURE" APX_CAPTURE_FULL_ACK="$APX_CAPTURE_FULL_ACK" APX_CAPTURE_BODY_CAP="$APX_CAPTURE_BODY_CAP" APX_REDACT_KEYS="$APX_REDACT_KEYS"
     export APX_MAX_REQUEST_BYTES="$APX_MAX_REQUEST_BYTES" APX_MAX_EVENT_STREAMS_PER_IP="$APX_MAX_EVENT_STREAMS_PER_IP" APX_HEALTH_INTERVAL_SECONDS="$HEALTH_INTERVAL_SECONDS"
-    export APX_CHAIN="${APX_CHAIN:-}"
+    export APX_CHAIN="${APX_CHAIN:-}" APX_LOG_LEVEL="$APX_LOG_LEVEL"
     export APX_STATE_DIR="$STATE_DIR" APX_LOG_DIR="$LOG_DIR" APX_CONFIG="$CONFIG_FILE"
     export APX_HEADROOM_URL="http://$BIND_HOST:$HEADROOM_PORT" APX_PXPIPE_URL="http://$BIND_HOST:$PXPIPE_PORT" APX_SQUEEZR_URL="http://$BIND_HOST:$SQUEEZR_PORT"
     exec bash -lc "export PATH=\"$PATH\"; exec $GATEWAY_CMD"
@@ -315,7 +337,7 @@ start_squeezr() {
     cd "$WORKDIR"
     export_ca_bundle
     export SQUEEZR_PORT="$SQUEEZR_PORT" SQUEEZR_MITM_PORT="$SQUEEZR_MITM_PORT" SQUEEZR_DAEMON=1
-    export SQUEEZR_PACKAGE_SPEC SQUEEZR_TARGET_API_URL
+    export SQUEEZR_PACKAGE_SPEC SQUEEZR_TARGET_API_URL APX_LOG_LEVEL
     export ANTHROPIC_BASE_URL="http://$BIND_HOST:$SQUEEZR_PORT"
     export openai_base_url="http://$BIND_HOST:$SQUEEZR_PORT" GEMINI_API_BASE_URL="http://$BIND_HOST:$SQUEEZR_PORT"
     exec bash -lc "export PATH=\"$PATH\"; exec $SQUEEZR_CMD $SQUEEZR_EXTRA_ARGS"
@@ -347,7 +369,7 @@ start_pxpipe() {
   (
     cd "$WORKDIR"
     export_ca_bundle
-    export PORT="$PXPIPE_PORT" PXPIPE_PORT="$PXPIPE_PORT" HOST="$BIND_HOST" PXPIPE_MODELS="$PXPIPE_MODELS" ANTHROPIC_UPSTREAM="$PXPIPE_TARGET_API_URL"
+    export PORT="$PXPIPE_PORT" PXPIPE_PORT="$PXPIPE_PORT" HOST="$BIND_HOST" PXPIPE_MODELS="$PXPIPE_MODELS" ANTHROPIC_UPSTREAM="$PXPIPE_TARGET_API_URL" APX_LOG_LEVEL="$APX_LOG_LEVEL"
     exec bash -lc "export PATH=\"$PATH\"; exec $PXPIPE_CMD $PXPIPE_EXTRA_ARGS"
   ) >> "$log_file" 2>&1 &
   echo $! > "$RUN_DIR/pxpipe.pid"
@@ -2113,7 +2135,7 @@ target_cli() {
 
 status() {
   load_config
-  local spid gpid ppid hpid sqpid gport pport hport sqport sstate ghealth phealth hhealth sqhealth
+  local spid gpid ppid hpid sqpid gport pport hport sqport sstate ghealth phealth hhealth sqhealth mode installed latest
   spid="$(read_pid "$RUN_DIR/supervisor.pid")"
   gpid="$(read_pid "$RUN_DIR/gateway.pid")"
   ppid="$(read_pid "$RUN_DIR/pxpipe.pid")"
@@ -2144,9 +2166,16 @@ status() {
   else
     sqhealth="disabled"
   fi
-  echo "version: $(read_installed_version)"
+  installed="$(read_installed_version)"
+  mode="$(read_install_mode)"
+  echo "version: $installed"
+  if [[ "$mode" == "release" ]]; then
+    latest="$(latest_available_version "$mode")"
+    print_update_status "$installed" "$latest"
+  fi
   echo "config: $CONFIG_FILE"
   echo "service backend: $(service_backend 2>/dev/null || echo unknown)"
+  echo "log level: ${APX_LOG_LEVEL:-info}"
   echo "mode: $(current_mode)"
   echo "chain: $(chain_description)"
   echo "supervisor: ${spid:-none} $sstate"
@@ -2179,12 +2208,47 @@ doctor() {
   headroom doctor || true
 }
 
+tail_files() {
+  local tail_lines="$1" follow="$2"
+  shift 2
+  if [[ "$follow" == "1" ]]; then
+    tail -n "$tail_lines" -F "$@"
+  else
+    tail -n "$tail_lines" "$@"
+  fi
+}
+
+show_logs_usage() {
+  echo "usage: $0 logs [target] [--tail N] [--no-follow]" >&2
+  echo "targets: all, supervisor, gateway, pxpipe, squeezr, headroom, headroom.stdout, headroom.proxy, launchd.out, launchd.err" >&2
+}
+
 show_logs() {
-  local file="${1:-supervisor}"
+  local file="supervisor" tail_lines="" follow=1 arg
   local headroom_proxy_log="${HEADROOM_LOG_FILE:-$HOME/.headroom/logs/proxy.log}"
+  ensure_runtime_dirs
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    case "$arg" in
+      --tail|-n)
+        shift
+        tail_lines="${1:-}"
+        ;;
+      --tail=*) tail_lines="${arg#--tail=}" ;;
+      --no-follow) follow=0 ;;
+      -h|--help) show_logs_usage; return 0 ;;
+      --*) echo "unknown option: $arg" >&2; show_logs_usage; return 2 ;;
+      *) file="$arg" ;;
+    esac
+    shift || true
+  done
+  case "$tail_lines" in
+    "") [[ "$file" == "all" ]] && tail_lines=40 || tail_lines=80 ;;
+    *[!0-9]*|0) echo "error: --tail must be a positive integer" >&2; return 2 ;;
+  esac
   case "$file" in
     all)
-      log_files=()
+      local log_files=() name path
       for name in supervisor gateway headroom pxpipe squeezr launchd.out launchd.err; do
         path="$LOG_DIR/$name.log"
         [[ -f "$path" ]] || : > "$path"
@@ -2193,31 +2257,177 @@ show_logs() {
       mkdir -p "$(dirname "$headroom_proxy_log")"
       [[ -f "$headroom_proxy_log" ]] || : > "$headroom_proxy_log"
       log_files+=("$headroom_proxy_log")
-      tail -n 40 -F "${log_files[@]}"
+      tail_files "$tail_lines" "$follow" "${log_files[@]}"
       ;;
     headroom)
       [[ -f "$LOG_DIR/headroom.log" ]] || : > "$LOG_DIR/headroom.log"
       mkdir -p "$(dirname "$headroom_proxy_log")"
       [[ -f "$headroom_proxy_log" ]] || : > "$headroom_proxy_log"
-      tail -n 80 -F "$LOG_DIR/headroom.log" "$headroom_proxy_log"
+      tail_files "$tail_lines" "$follow" "$LOG_DIR/headroom.log" "$headroom_proxy_log"
       ;;
     headroom.stdout)
       [[ -f "$LOG_DIR/headroom.log" ]] || : > "$LOG_DIR/headroom.log"
-      tail -n 80 -F "$LOG_DIR/headroom.log"
+      tail_files "$tail_lines" "$follow" "$LOG_DIR/headroom.log"
       ;;
     headroom.proxy)
       mkdir -p "$(dirname "$headroom_proxy_log")"
       [[ -f "$headroom_proxy_log" ]] || : > "$headroom_proxy_log"
-      tail -n 80 -F "$headroom_proxy_log"
+      tail_files "$tail_lines" "$follow" "$headroom_proxy_log"
       ;;
     supervisor|gateway|pxpipe|squeezr|launchd.out|launchd.err)
       [[ -f "$LOG_DIR/$file.log" ]] || : > "$LOG_DIR/$file.log"
-      tail -n 80 -F "$LOG_DIR/$file.log"
+      tail_files "$tail_lines" "$follow" "$LOG_DIR/$file.log"
       ;;
-    *)
-      echo "usage: $0 logs [all|supervisor|gateway|pxpipe|squeezr|headroom|headroom.stdout|headroom.proxy|launchd.out|launchd.err]" >&2
-      exit 2
+    *) show_logs_usage; return 2 ;;
+  esac
+}
+
+redact_stream() {
+  awk '
+    {
+      line=$0
+      low=tolower(line)
+      if (line !~ /^[[:space:]]*#/ && low ~ /(api[_-]?key|token|secret|password|authorization|cookie)/) {
+        gsub(/Bearer[[:space:]]+[^[:space:]]+/, "Bearer REDACTED", line)
+        if (line ~ /=/) {
+          sub(/=.*/, "=REDACTED", line)
+        } else if (line ~ /:/) {
+          sub(/:.*/, ": REDACTED", line)
+        } else {
+          line="REDACTED"
+        }
+      }
+      print line
+    }
+  '
+}
+
+copy_redacted_tail() {
+  local src="$1" dst="$2" tail_lines="$3"
+  [[ -f "$src" ]] || return 0
+  mkdir -p "$(dirname "$dst")"
+  tail -n "$tail_lines" "$src" 2>/dev/null | redact_stream > "$dst" || true
+}
+
+support_bundle_usage() {
+  cat >&2 <<EOF
+usage: $0 support-bundle [--output PATH] [--tail N]
+
+Creates a metadata-only, redacted support bundle. Request/response bodies,
+metrics databases, history JSONL, certs, and dependency caches are not included.
+EOF
+}
+
+support_bundle() {
+  local output="" tail_lines=200 arg
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    case "$arg" in
+      --output|-o) shift; output="${1:-}" ;;
+      --output=*) output="${arg#--output=}" ;;
+      --tail|-n) shift; tail_lines="${1:-}" ;;
+      --tail=*) tail_lines="${arg#--tail=}" ;;
+      -h|--help) support_bundle_usage; return 0 ;;
+      *) echo "unknown option: $arg" >&2; support_bundle_usage; return 2 ;;
+    esac
+    shift || true
+  done
+  case "$tail_lines" in *[!0-9]*|0|"") echo "error: --tail must be a positive integer" >&2; return 2 ;; esac
+  ensure_runtime_dirs
+  local stamp tmp bundle_name
+  stamp="$(date '+%Y%m%d-%H%M%S')"
+  bundle_name="apx-support-$stamp.tar.gz"
+  output="${output:-$PWD/$bundle_name}"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/apx-support.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" RETURN
+  mkdir -p "$tmp/meta" "$tmp/logs" "$tmp/config"
+
+  APX_UPDATE_CHECK=0 "$0" version > "$tmp/meta/version.txt" 2>&1 || true
+  APX_UPDATE_CHECK=0 "$0" status > "$tmp/meta/status.txt" 2>&1 || true
+  "$0" urls > "$tmp/meta/urls.txt" 2>&1 || true
+  {
+    echo "generated: $(now)"
+    echo "uname: $(uname -a 2>/dev/null || true)"
+    echo "apx: $0"
+    echo "config: $CONFIG_FILE"
+    echo "state: $STATE_DIR"
+    echo "share: $SHARE_DIR"
+    echo "log_dir: $LOG_DIR"
+  } > "$tmp/meta/environment.txt"
+  {
+    for c in curl git gh node npm npx python3 headroom squeezr lsof ss fuser tar shasum sha256sum; do
+      printf '%-12s %s
+' "$c" "$(command -v "$c" 2>/dev/null || echo missing)"
+    done
+  } > "$tmp/meta/commands.txt"
+
+  if [[ -f "$CONFIG_FILE" ]]; then
+    redact_stream < "$CONFIG_FILE" > "$tmp/config/config.env.redacted"
+  fi
+  for f in "$INSTALL_MODE_FILE" "$VERSION_FILE" "$STATE_DIR/previous.tag" "$SERVICE_BACKEND_FILE"; do
+    if [[ -f "$f" ]]; then
+      cp "$f" "$tmp/meta/$(basename "$f")" 2>/dev/null || true
+    fi
+  done
+
+  local name path headroom_proxy_log
+  for name in supervisor gateway headroom pxpipe squeezr launchd.out launchd.err; do
+    path="$LOG_DIR/$name.log"
+    copy_redacted_tail "$path" "$tmp/logs/$name.log" "$tail_lines"
+  done
+  headroom_proxy_log="${HEADROOM_LOG_FILE:-$HOME/.headroom/logs/proxy.log}"
+  copy_redacted_tail "$headroom_proxy_log" "$tmp/logs/headroom.proxy.log" "$tail_lines"
+
+  mkdir -p "$(dirname "$output")"
+  tar -C "$tmp" -czf "$output" .
+  echo "support bundle: $output"
+}
+
+debug_usage() {
+  cat >&2 <<EOF
+usage: $0 debug level get
+       $0 debug level set info|debug|trace [--no-restart]
+EOF
+}
+
+debug_command() {
+  local sub="${1:-}" action="${2:-}" level="${3:-}" restart=1
+  if [[ "$sub" != "level" ]]; then
+    debug_usage
+    return 2
+  fi
+  shift 2 || true
+  case "$action" in
+    get)
+      load_config
+      echo "APX_LOG_LEVEL=${APX_LOG_LEVEL:-info}"
       ;;
+    set)
+      level="${1:-}"
+      shift || true
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --no-restart) restart=0 ;;
+          *) debug_usage; return 2 ;;
+        esac
+        shift
+      done
+      if ! valid_log_level "$level"; then
+        echo "error: log level must be info, debug, or trace" >&2
+        return 2
+      fi
+      load_config
+      set_config_var APX_LOG_LEVEL "$level"
+      echo "APX_LOG_LEVEL=$level"
+      if [[ "$restart" == "1" ]]; then
+        restart_service_if_managed
+      else
+        echo "not restarted; run: apx restart"
+      fi
+      ;;
+    -h|--help|help|"") debug_usage; return 0 ;;
+    *) debug_usage; return 2 ;;
   esac
 }
 
@@ -2265,8 +2475,6 @@ read_source_repo() {
 remote_version() {
   local url="$UPDATE_REPO_URL"
   local branch="$UPDATE_REPO_BRANCH"
-  local tmp
-  tmp="$(mktemp -d)"
   local ver="unknown"
   if command -v curl >/dev/null 2>&1; then
     local raw_url="${url%.git}"
@@ -2277,12 +2485,73 @@ remote_version() {
       ver="$fetched"
     fi
   fi
-  rm -rf "$tmp"
   echo "$ver"
 }
 
+release_repo_from_asset_url() {
+  local asset_url="${1:-$RELEASE_ASSET_URL}"
+  asset_url="${asset_url//\\/}"
+  if [[ "$asset_url" =~ ^https://github.com/([^/]+/[^/]+)/releases/ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  printf '%s\n' "$APX_RELEASE_REPO"
+}
+
+release_latest_version() {
+  local repo latest_url effective tag
+  repo="$(release_repo_from_asset_url "$RELEASE_ASSET_URL")"
+  latest_url="https://github.com/$repo/releases/latest"
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "unknown"
+    return 0
+  fi
+  effective="$(curl -fsSLI --max-time 10 -o /dev/null -w '%{url_effective}' "$latest_url" 2>/dev/null || true)"
+  tag=""
+  case "$effective" in
+    *'/releases/tag/'*) tag="${effective##*/releases/tag/}" ;;
+    *'/releases/download/'*)
+      tag="${effective##*/releases/download/}"
+      tag="${tag%%/*}"
+      ;;
+  esac
+  tag="${tag%%[/?#]*}"
+  if [[ "$tag" == v[0-9]* ]]; then
+    echo "${tag#v}"
+  else
+    echo "unknown"
+  fi
+}
+
+latest_available_version() {
+  local mode="${1:-}"
+  [[ -n "$mode" ]] || mode="$(read_install_mode)"
+  if [[ "${APX_UPDATE_CHECK:-1}" == "0" ]]; then
+    echo "unknown"
+    return 0
+  fi
+  if [[ "$mode" == "release" ]]; then
+    release_latest_version
+  else
+    remote_version
+  fi
+}
+
+print_update_status() {
+  local installed="$1" latest="$2" indent="${3:-}"
+  echo "${indent}latest version:    $latest"
+  if [[ "$latest" == "unknown" ]]; then
+    echo "${indent}update status:     unknown"
+  elif [[ "$installed" == "$latest" ]]; then
+    echo "${indent}update status:     up to date"
+  else
+    echo "${indent}update status:     update available"
+    echo "${indent}run:               apx update --to v$latest"
+  fi
+}
+
 show_version() {
-  local installed local_repo local_ver mode
+  local installed local_repo local_ver mode latest
   installed="$(read_installed_version)"
   local_repo="$(read_source_repo)"
   mode="$(read_install_mode)"
@@ -2293,6 +2562,8 @@ show_version() {
     local tag; tag="$(current_version_tag)"
     echo "current symlink:   $CURRENT_LINK -> versions/${tag:-?}"
     echo "update channel:    $RELEASE_ASSET_URL"
+    latest="$(latest_available_version "$mode")"
+    print_update_status "$installed" "$latest"
   elif [[ -n "$local_repo" && -d "$local_repo/.git" ]]; then
     local_ver="$(git -C "$local_repo" describe --tags --always --dirty 2>/dev/null || echo unknown)"
     echo "source repo:       $local_repo"
@@ -2305,17 +2576,12 @@ show_version() {
 }
 
 check_updates() {
-  local installed remote
+  local installed latest mode
   installed="$(read_installed_version)"
+  mode="$(read_install_mode)"
   echo "installed version: $installed"
-  remote="$(remote_version)"
-  echo "latest version:    $remote"
-  if [[ "$installed" == "$remote" || "$remote" == "unknown" ]]; then
-    echo "status: up to date"
-  else
-    echo "status: update available"
-    echo "run: apx update"
-  fi
+  latest="$(latest_available_version "$mode")"
+  print_update_status "$installed" "$latest"
 }
 
 do_update() {
@@ -3003,7 +3269,7 @@ EOF
 
 print_completions() {
   local shell="${1:-}"
-  local cmds="start stop disable restart run status mode chain target port claude doctor install uninstall supervisor logs urls dashboard version check-updates update versions use rollback cleanup completions help"
+  local cmds="start stop disable restart run status mode chain target port claude doctor install uninstall supervisor logs support-bundle debug urls dashboard version check-updates update versions use rollback cleanup completions help"
   local modes="current headroom-pxpipe pxpipe-headroom headroom squeezr headroom-squeezr pxpipe direct off full"
   local chain_subs="get set clear ls preset help"
   local target_subs="get set reset help"
@@ -3034,7 +3300,8 @@ _apx_completions() {
     target)   COMPREPLY=( \$(compgen -W "$target_subs --no-restart" -- "\$cur") ) ;;
     port)     COMPREPLY=( \$(compgen -W "$port_subs $port_services --no-restart --no-claude-sync" -- "\$cur") ) ;;
     claude)   COMPREPLY=( \$(compgen -W "$claude_subs local docker-host" -- "\$cur") ) ;;
-    logs)     COMPREPLY=( \$(compgen -W "$log_targets" -- "\$cur") ) ;;
+    logs)     COMPREPLY=( \$(compgen -W "$log_targets --tail --no-follow" -- "\$cur") ) ;;
+    debug)    COMPREPLY=( \$(compgen -W "level get set info debug trace --no-restart" -- "\$cur") ) ;;
     completions) COMPREPLY=( \$(compgen -W "bash zsh fish install uninstall" -- "\$cur") ) ;;
     uninstall) COMPREPLY=( \$(compgen -W "$purge_flags" -- "\$cur") ) ;;
     update)   COMPREPLY=( \$(compgen -W "--to --to-latest --force --dry-run" -- "\$cur") ) ;;
@@ -3073,6 +3340,7 @@ ZSH
     port) _describe -t port 'apx port' port_subs && _describe -t port-services 'services' port_services ;;
     claude) _describe -t claude 'apx claude' claude_subs ;;
     logs) _describe -t logs 'apx log target' log_targets ;;
+    debug) _values 'debug' 'level' 'get' 'set' 'info' 'debug' 'trace' '--no-restart' ;;
     completions) _values 'action' 'bash' 'zsh' 'fish' 'install' 'uninstall' ;;
     uninstall) _values 'flag' '--purge' '--purge=all' '--purge=binaries' '--purge=share' '--purge=state' '--purge=config' '--purge=claude' '--purge=completions' '--purge=source' '--purge=deps' '--purge=caches' '--purge=all,deps,caches' '--dry-run' '--yes' '-y' '--help' ;;
     update) _values 'flag' '--to[git ref]' '--to-latest' '--force' '--dry-run' ;;
@@ -3113,6 +3381,7 @@ FISH
       done
       cat <<'FISH'
 complete -c apx -n "__fish_seen_subcommand_from completions" -a "bash zsh fish install uninstall"
+complete -c apx -n "__fish_seen_subcommand_from debug" -a "level get set info debug trace --no-restart"
 complete -c apx -n "__fish_seen_subcommand_from target" -l no-restart
 complete -c apx -n "__fish_seen_subcommand_from port" -l no-restart -l no-claude-sync
 complete -c apx -n "__fish_seen_subcommand_from uninstall" -l purge -l dry-run -l yes
@@ -3260,11 +3529,13 @@ Commands:
   install              Install/start the selected service backend
   uninstall [--purge]  Stop and remove service; --purge removes apx-owned files
   supervisor           Internal foreground supervisor
-  logs [name]          Follow logs: all, supervisor, gateway, pxpipe, squeezr, headroom, headroom.proxy, launchd.*
+  logs [name]          Follow logs; supports --tail N and --no-follow
+  support-bundle       Create a redacted metadata/log bundle for support
+  debug level <sub>    Get/set APX_LOG_LEVEL (info|debug|trace)
   urls                 Print dashboard, health, and stats URLs
   dashboard [--open]   Print URLs; with --open, open the pxpipe dashboard
-  version              Print installed and source-repo version
-  check-updates        Compare installed version against origin/main
+  version              Print installed version and update channel
+  check-updates        Compare installed version against latest available update
   update [--to REF]    Update to a newer version.
                        release mode: fetch verified apx.sh from GitHub Releases.
                        dev mode: git pull the recorded source clone and reinstall.
@@ -3324,7 +3595,9 @@ case "$cmd" in
   doctor) doctor ;;
   install) install_service ;;
   uninstall) uninstall_command "$@" ;;
-  logs) show_logs "${1:-supervisor}" ;;
+  logs) show_logs "$@" ;;
+  support-bundle) support_bundle "$@" ;;
+  debug) debug_command "$@" ;;
   urls) dashboard_urls ;;
   dashboard) open_dashboard "${1:-}" ;;
   version|--version|-V) show_version ;;

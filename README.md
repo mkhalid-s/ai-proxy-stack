@@ -675,6 +675,23 @@ apx pxpipe models set off
 systemd because those supervisors deliberately start apx with a controlled
 environment. `apx pxpipe models set` updates the active `config.env` instead.
 
+### pxpipe package upgrades
+
+Fresh installs use `PXPIPE_PACKAGE_SPEC="pxpipe-proxy@0.11.1"`. Existing
+`PXPIPE_CMD` values are intentionally preserved on install/update, including
+older defaults and custom commands. To opt into a newer package explicitly,
+update both values in `~/.config/apx/config.env`, then run `apx restart`:
+
+```bash
+PXPIPE_PACKAGE_SPEC="pxpipe-proxy@0.11.1"
+PXPIPE_CMD="npx -y pxpipe-proxy@0.11.1"
+```
+
+If `npx` is unavailable, use `PXPIPE_CMD="npm exec --yes
+pxpipe-proxy@0.11.1"`. apx runs matching default commands directly, avoiding
+an extra login-shell/npx resolution step; a fully custom command is preserved
+and uses the compatibility shell path.
+
 ## Optimizer Controls
 
 `apx` exposes the safe, high-signal controls of each optimizer while leaving

@@ -349,6 +349,7 @@ backup_if_different() {
 sync_config() {
   if [[ ! -f "$RUNTIME_CONFIG" ]]; then
     run_step "install runtime config" cp "$SRC_CONFIG" "$RUNTIME_CONFIG"
+    [[ "$CHECK_ONLY" == "1" ]] || chmod 600 "$RUNTIME_CONFIG"
     return 0
   fi
 
@@ -379,6 +380,7 @@ sync_config() {
     }
   ' "$RUNTIME_CONFIG" "$SRC_CONFIG" >> "$tmp"
   mv "$tmp" "$RUNTIME_CONFIG"
+  chmod 600 "$RUNTIME_CONFIG"
 }
 
 sync_dashboard() {
@@ -408,6 +410,7 @@ sync_runtime() {
     log "would sync runtime command/config into launchd-safe paths"
   else
     mkdir -p "$RUNTIME_BIN_DIR" "$RUNTIME_CONFIG_DIR" "$RUNTIME_STATE/logs" "$RUNTIME_STATE/run" "$RUNTIME_SHARE_DIR"
+    chmod 700 "$RUNTIME_CONFIG_DIR"
   fi
 
   if [[ "$FROM_PAYLOAD" == "1" ]]; then

@@ -170,6 +170,7 @@
     tr.clickable { cursor: pointer; }
     tr.clickable:hover { background: var(--panel-2); }
     tr.clickable:focus { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--panel-2); }
+    tr.clickable.selected { background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
     .status-ok { color: var(--ok); }
     .status-warn { color: var(--warn); }
     .status-fail { color: var(--fail); }
@@ -223,6 +224,12 @@
       <div class="meta" id="header-meta">loading gateway state...</div>
     </div>
     <div class="top-actions">
+      <label class="badge" for="window-select">window
+        <select id="window-select" aria-label="Dashboard time window">
+          <option value="1h">1h</option><option value="6h">6h</option><option value="24h">24h</option>
+          <option value="7d">7d</option><option value="30d">30d</option>
+        </select>
+      </label>
       <span class="badge" id="version-badge">LeanRelay</span>
       <span class="badge" id="capture-badge">capture ?</span>
       <span class="badge" id="stream-badge">live</span>
@@ -267,10 +274,68 @@
     </details>
 
     <details class="accordion" open>
-      <summary><h2>Gateway Timeseries</h2><span class="badge">last hour</span></summary>
+      <summary><h2>Gateway Timeseries</h2><span class="badge" id="timeseries-window">loading</span></summary>
       <div class="content">
         <svg class="mini-chart" id="latency-chart" role="img" aria-label="latency chart"></svg>
         <svg class="mini-chart" id="request-chart" role="img" aria-label="request chart"></svg>
+      </div>
+    </details>
+
+    <details class="accordion" open>
+      <summary><h2>Token Consumption & Verified Savings</h2><span class="badge" id="efficiency-badge">loading</span></summary>
+      <div class="content grid">
+        <div class="card"><h2>Input Tokens</h2><div class="kpi" id="e-input">-</div><div class="kpi-sub">observed upstream usage</div></div>
+        <div class="card"><h2>Output Tokens</h2><div class="kpi" id="e-output">-</div><div class="kpi-sub">observed model output</div></div>
+        <div class="card"><h2>Cache Tokens</h2><div class="kpi" id="e-cache">-</div><div class="kpi-sub" id="e-cache-sub">read / write</div></div>
+        <div class="card"><h2>Verified Saved</h2><div class="kpi" id="e-saved">-</div><div class="kpi-sub" id="e-saved-sub">waiting for per-request measurements</div></div>
+      </div>
+    </details>
+
+    <details class="accordion">
+      <summary><h2>Optimizer Measurement Coverage</h2><span class="badge" id="optimizer-coverage-count">0 optimizers</span></summary>
+      <div class="content">
+        <div class="table-wrap"><table>
+          <thead><tr><th>optimizer</th><th>attempts</th><th>applied</th><th>measured</th><th>estimated</th><th>unavailable</th><th>top bypass reasons</th></tr></thead>
+          <tbody id="optimizer-coverage-body"><tr><td colspan="7" class="muted">no optimizer attempts recorded yet</td></tr></tbody>
+        </table></div>
+      </div>
+    </details>
+
+    <details class="accordion">
+      <summary><h2>Savings Confidence Over Time</h2><span class="badge">measured ≠ estimated</span></summary>
+      <div class="content">
+        <svg class="mini-chart" id="measured-savings-chart" role="img" aria-label="measured savings over time"></svg>
+        <svg class="mini-chart" id="estimated-savings-chart" role="img" aria-label="estimated savings over time"></svg>
+      </div>
+    </details>
+
+    <details class="accordion">
+      <summary><h2>Usage by Model</h2><span class="badge" id="model-count">0 models</span></summary>
+      <div class="content">
+        <div class="table-wrap"><table>
+          <thead><tr><th>model</th><th>requests</th><th>input</th><th>output</th><th>cost</th><th>errors</th><th>p50</th><th>p95</th><th>p99</th></tr></thead>
+          <tbody id="models-body"><tr><td colspan="9" class="muted">loading model usage...</td></tr></tbody>
+        </table></div>
+      </div>
+    </details>
+
+    <details class="accordion">
+      <summary><h2>Chain Comparison</h2><span class="badge" id="chain-count">0 chains</span></summary>
+      <div class="content">
+        <div class="table-wrap"><table>
+          <thead><tr><th>chain</th><th>requests</th><th>input</th><th>output</th><th>cost</th><th>errors</th><th>p95</th><th>p99</th><th>direct comparison</th></tr></thead>
+          <tbody id="chains-body"><tr><td colspan="9" class="muted">loading chain comparison...</td></tr></tbody>
+        </table></div>
+      </div>
+    </details>
+
+    <details class="accordion">
+      <summary><h2>Model Quality Comparison</h2><span class="badge" id="model-quality-count">0 comparisons</span></summary>
+      <div class="content">
+        <div class="table-wrap"><table>
+          <thead><tr><th>model</th><th>chain</th><th>requests</th><th>errors</th><th>p95</th><th>vs direct</th></tr></thead>
+          <tbody id="model-quality-body"><tr><td colspan="6" class="muted">loading model quality...</td></tr></tbody>
+        </table></div>
       </div>
     </details>
 
@@ -279,8 +344,8 @@
       <div class="content split">
         <div>
           <div class="table-wrap"><table>
-            <thead><tr><th>last</th><th>session</th><th>req</th><th>tokens</th><th>cost</th><th>mode</th></tr></thead>
-            <tbody id="sessions-body"><tr><td colspan="6" class="muted">no sessions yet</td></tr></tbody>
+            <thead><tr><th>last</th><th>session</th><th>req</th><th>tokens</th><th>verified saved</th><th>coverage</th><th>cost</th><th>mode</th></tr></thead>
+            <tbody id="sessions-body"><tr><td colspan="8" class="muted">no sessions yet</td></tr></tbody>
           </table></div>
         </div>
         <div>
@@ -297,6 +362,10 @@
         <div class="card"><h2>Requests</h2><div class="kpi" id="hr-requests">-</div><div class="kpi-sub" id="hr-failed">failed -</div></div>
         <div class="card"><h2>Cache</h2><div class="kpi" id="hr-cache">-</div><div class="kpi-sub">hits / entries</div></div>
         <div class="card"><h2>Raw</h2><div class="row"><span class="k">Endpoint</span><a href="/api/tool/headroom" target="_blank">/api/tool/headroom</a></div></div>
+        <details class="accordion" id="headroom-native-section">
+          <summary><h2>Headroom dashboard</h2><a id="headroom-native-link" href="#" target="_blank" rel="noopener noreferrer">open native dashboard</a></summary>
+          <div class="content"><div class="iframe-wrap"><iframe id="headroom-native-frame" loading="lazy" referrerpolicy="no-referrer" title="Headroom dashboard"></iframe></div></div>
+        </details>
       </div>
     </details>
 
@@ -337,12 +406,43 @@
     </details>
 
     <details class="accordion">
-      <summary><h2>Recent Gateway Requests</h2><span class="badge">live</span></summary>
+      <summary><h2>Recent Gateway Requests</h2><span class="badge" id="history-badge">loading</span></summary>
       <div class="content">
+        <div class="tabs" aria-label="Request filters">
+          <select id="history-status" aria-label="Filter requests by status"><option value="">all status</option><option value="2xx">2xx</option><option value="4xx">4xx</option><option value="5xx">5xx</option><option value="error">all errors</option></select>
+          <input id="history-model" aria-label="Filter requests by exact model" placeholder="exact model">
+          <input id="history-chain" aria-label="Filter requests by exact chain" placeholder="exact chain">
+          <input id="history-session" aria-label="Filter requests by exact session" placeholder="exact session">
+          <button class="tab" id="history-filter-apply" type="button">apply filters</button>
+          <button class="tab" id="history-export" type="button">export CSV</button>
+        </div>
         <div class="table-wrap"><table>
           <thead><tr><th>time</th><th>method</th><th>path</th><th>model</th><th>status</th><th>latency</th><th>fb</th><th>tokens</th><th>cost</th><th>session</th></tr></thead>
           <tbody id="history-body"><tr><td colspan="10" class="muted">no requests yet</td></tr></tbody>
         </table></div>
+        <button class="tab" id="history-load-more" type="button" hidden>load older requests</button>
+        <h3 id="request-detail-title">Request Detail</h3>
+        <pre class="detail" id="request-detail">Select a durable request row to inspect token, cache, timing, routing, and optimizer metadata.</pre>
+      </div>
+    </details>
+
+    <details class="accordion">
+      <summary><h2>Operations</h2><span class="badge" id="operations-badge">loading</span></summary>
+      <div class="content split">
+        <div class="card">
+          <h2>Metrics Store</h2>
+          <div class="row"><span class="k">Stored requests</span><span class="v" id="op-requests">-</span></div>
+          <div class="row"><span class="k">Database size</span><span class="v" id="op-db-size">-</span></div>
+          <div class="row"><span class="k">Audit history</span><span class="v" id="op-history-size">-</span></div>
+          <div class="row"><span class="k">Retention</span><span class="v" id="op-retention">-</span></div>
+          <div class="row"><span class="k">Last request</span><span class="v" id="op-last-request">-</span></div>
+          <div class="row"><span class="k">Dashboard transport</span><span class="v" id="op-security">-</span></div>
+          <div class="row"><span class="k">Optimizer bind</span><span class="v" id="op-optimizer-host">-</span></div>
+        </div>
+        <div>
+          <h3>Recent Lifecycle Events</h3>
+          <pre class="detail" id="operations-events">loading...</pre>
+        </div>
       </div>
     </details>
 
@@ -364,13 +464,38 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const state = { status: null, detect: null, compare: null, summary: null, sessions: [], history: [] };
+    const DASHBOARD_WINDOW_KEY = "apx.dashboard.window";
+    const HISTORY_FILTERS_KEY = "apx.dashboard.historyFilters";
+    const SESSION_SELECTION_KEY = "apx.dashboard.selectedSession";
+    const REQUEST_SELECTION_KEY = "apx.dashboard.selectedRequest";
+    let dashboardWindow = localStorage.getItem(DASHBOARD_WINDOW_KEY) || "1h";
+    if (!new Set(["1h", "6h", "24h", "7d", "30d"]).has(dashboardWindow)) dashboardWindow = "1h";
+    $("window-select").value = dashboardWindow;
     let sessionLoadSequence = 0;
+    let selectedSessionId = localStorage.getItem(SESSION_SELECTION_KEY) || "";
+    let restoreSessionOnFirstRender = Boolean(selectedSessionId);
+    let requestLoadSequence = 0;
+    let selectedRequestRowId = localStorage.getItem(REQUEST_SELECTION_KEY) || "";
+    let restoreRequestOnFirstRender = Boolean(selectedRequestRowId);
     let refreshInFlight = false;
+    let historyNextBeforeId = null;
+    const historyFilters = { status: "", model: "", chain: "", session: "" };
+    try {
+      const saved = JSON.parse(localStorage.getItem(HISTORY_FILTERS_KEY) || "{}");
+      for (const key of Object.keys(historyFilters)) if (typeof saved[key] === "string") historyFilters[key] = saved[key];
+    } catch (_) {}
+    for (const key of Object.keys(historyFilters)) $("history-" + key).value = historyFilters[key];
 
     const fmt = (n) => n != null && Number.isFinite(Number(n)) ? Number(n).toLocaleString() : "-";
     const pct = (n) => n != null && Number.isFinite(Number(n)) ? `${Number(n).toFixed(1)}%` : "-";
     const ms = (n) => n != null && Number.isFinite(Number(n)) && Number(n) > 0 ? `${Math.round(Number(n))} ms` : "-";
     const usd = (n) => n != null && Number.isFinite(Number(n)) ? `$${Number(n).toFixed(Number(n) >= 1 ? 2 : 4)}` : "unpriced";
+    const bytes = (n) => {
+      const value = Number(n || 0), units = ["B", "KB", "MB", "GB"];
+      let amount = value, index = 0;
+      while (amount >= 1024 && index < units.length - 1) { amount /= 1024; index += 1; }
+      return `${amount.toFixed(index ? 1 : 0)} ${units[index]}`;
+    };
     const short = (s, n = 10) => s ? String(s).slice(0, n) : "-";
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const age = (ts) => ts ? new Date(ts * 1000).toLocaleTimeString() : "-";
@@ -387,6 +512,33 @@
       return res.json();
     }
 
+    function historyUrl(beforeId = null) {
+      const params = new URLSearchParams({ n: "50" });
+      for (const [key, value] of Object.entries(historyFilters)) if (value) params.set(key, value);
+      if (beforeId) params.set("before_id", beforeId);
+      return `/api/history?${params.toString()}`;
+    }
+
+    function historyExportUrl() {
+      const params = new URLSearchParams({ limit: "10000" });
+      for (const [key, value] of Object.entries(historyFilters)) if (value) params.set(key, value);
+      return `/api/history/export.csv?${params.toString()}`;
+    }
+
+    async function refreshHistory() {
+      try { renderHistory(await getJSON(historyUrl()), true); } catch (_) {}
+    }
+
+    async function loadOlderHistory() {
+      if (!historyNextBeforeId) return;
+      const button = $("history-load-more");
+      button.disabled = true;
+      button.textContent = "loading...";
+      try { renderHistory(await getJSON(historyUrl(historyNextBeforeId)), false); }
+      catch (_) { button.textContent = "load older requests"; }
+      finally { button.disabled = false; }
+    }
+
     function nativeToolUrl(rawUrl, path) {
       try {
         const url = new URL(rawUrl);
@@ -400,14 +552,16 @@
       }
     }
 
-    function setNativeToolUrl(name, rawUrl, path) {
+    function setNativeToolUrl(name, rawUrl, path, allowed) {
       const url = nativeToolUrl(rawUrl, path);
       const link = $(`${name}-native-link`);
       const frame = $(`${name}-native-frame`);
+      const details = frame?.closest("details");
+      if (details) details.hidden = !allowed;
+      if (!allowed) return;
       if (link) link.href = url || "#";
       if (frame) {
         frame.dataset.src = url;
-        const details = frame.closest("details");
         if (url && details?.open && !frame.getAttribute("src")) frame.src = url;
       }
     }
@@ -417,8 +571,15 @@
       $("version-badge").textContent = `LeanRelay · apx ${j.version || "?"}`;
       $("header-meta").textContent = `${j.mode || "unknown"} · ${j.chain_short || ""}${j.bind_warning ? " · " + j.bind_warning : ""}`;
       $("chain-view").innerHTML = (j.chain_hops || []).map((hop, i) => `${i ? '<span class="arr">-></span>' : ""}<span class="hop">${esc(hop)}</span>`).join("");
-      setNativeToolUrl("pxpipe", j.pxpipe_url, "/");
-      setNativeToolUrl("squeezr", j.squeezr_url, "/squeezr/dashboard");
+      const localOnly = ["127.0.0.1", "::1", "localhost"].includes(j.bind_host);
+      setNativeToolUrl("headroom", j.headroom_url, "/dashboard", localOnly);
+      setNativeToolUrl("pxpipe", j.pxpipe_url, "/", localOnly);
+      setNativeToolUrl("squeezr", j.squeezr_url, "/squeezr/dashboard", localOnly);
+      const security = j.security || {};
+      $("op-security").textContent = security.remote_bind
+        ? `REMOTE ${security.transport || "http"}${security.tls_terminated ? " · TLS" : " · TLS REQUIRED"}${security.dashboard_auth ? " · token set" : " · NO TOKEN"}`
+        : "loopback only";
+      $("op-optimizer-host").textContent = security.optimizer_host || "127.0.0.1";
     }
 
     function renderCapture(j) {
@@ -439,6 +600,94 @@
       $("k-cache").textContent = `cache read/write ${fmt(t.cache_read_tokens || 0)} / ${fmt(t.cache_write_tokens || 0)}`;
       $("k-cost").textContent = usd(t.cost_est_usd || 0);
       $("k-tools").textContent = `tool calls ${fmt(t.tool_calls || 0)}`;
+    }
+
+    function renderEfficiency(j) {
+      const observed = j.observed || {};
+      const optimizers = j.optimizers || [];
+      const measured = optimizers.reduce((sum, row) => sum + Number(row.measured_tokens_saved || 0), 0);
+      const estimated = optimizers.reduce((sum, row) => sum + Number(row.estimated_tokens_saved || 0), 0);
+      const measuredAttempts = optimizers.reduce((sum, row) => sum + Number(row.measured_attempts || 0), 0);
+      const attempts = optimizers.reduce((sum, row) => sum + Number(row.attempts || 0), 0);
+      $("e-input").textContent = fmt(observed.tokens_in || 0);
+      $("e-output").textContent = fmt(observed.tokens_out || 0);
+      $("e-cache").textContent = fmt((observed.cache_read_tokens || 0) + (observed.cache_write_tokens || 0));
+      $("e-cache-sub").textContent = `read / write ${fmt(observed.cache_read_tokens || 0)} / ${fmt(observed.cache_write_tokens || 0)}`;
+      $("e-saved").textContent = fmt(measured);
+      $("e-saved-sub").textContent = estimated > 0
+        ? `${fmt(estimated)} estimated separately · ${measuredAttempts}/${attempts} measured attempts`
+        : measuredAttempts > 0
+          ? `${measuredAttempts}/${attempts} measured optimizer attempts`
+          : "no verified per-request savings reported yet";
+      $("efficiency-badge").textContent = j.durable ? "persisted · verified" : "live only";
+      $("efficiency-badge").className = `badge ${measuredAttempts ? "ok" : "warn"}`;
+      $("optimizer-coverage-count").textContent = `${optimizers.length} optimizer${optimizers.length === 1 ? "" : "s"}`;
+      $("optimizer-coverage-body").innerHTML = optimizers.length ? optimizers.map(row => {
+        const reasons = (row.bypass_reasons || []).map(reason => `${reason.reason} (${fmt(reason.count)})`).join(", ") || "none reported";
+        return `<tr><td>${esc(row.optimizer)}</td><td>${fmt(row.attempts || 0)}</td><td>${fmt(row.applied || 0)}</td>
+          <td>${fmt(row.measured_attempts || 0)}</td><td>${fmt(row.estimated_attempts || 0)}</td><td>${fmt(row.unavailable_attempts || 0)}</td><td>${esc(reasons)}</td></tr>`;
+      }).join("") : '<tr><td colspan="7" class="muted">no optimizer attempts recorded yet</td></tr>';
+    }
+
+    function renderEfficiencyTimeseries(j) {
+      const rows = j.series || [];
+      chartLine("measured-savings-chart", rows, "measured_tokens_saved", "Measured tokens saved");
+      chartLine("estimated-savings-chart", rows, "estimated_tokens_saved", "Estimated tokens saved (separate)");
+    }
+
+    function renderModels(j) {
+      const rows = Object.entries(j.by_model || {}).sort(([, a], [, b]) => Number(b.cost_usd || 0) - Number(a.cost_usd || 0));
+      $("model-count").textContent = `${rows.length} model${rows.length === 1 ? "" : "s"}`;
+      $("models-body").innerHTML = rows.length ? rows.map(([model, value]) => `<tr>
+        <td>${esc(model)}</td><td>${fmt(value.requests || 0)}</td><td>${fmt(value.tokens_in || 0)}</td>
+        <td>${fmt(value.tokens_out || 0)}</td><td>${usd(value.cost_usd || 0)}</td><td>${pct(value.error_rate_pct || 0)}</td>
+        <td>${ms(value.latency_p50_ms)}</td><td>${ms(value.latency_p95_ms)}</td><td>${ms(value.latency_p99_ms)}</td>
+      </tr>`).join("") : '<tr><td colspan="9" class="muted">no durable model usage in this window</td></tr>';
+    }
+
+    function renderChains(j) {
+      const rows = j.chains || [];
+      $("chain-count").textContent = `${rows.length} chain${rows.length === 1 ? "" : "s"}`;
+      $("chains-body").innerHTML = rows.length ? rows.map(row => {
+        const regression = row.observational_regression || {};
+        const detail = regression.available
+          ? `p95 ${Number(regression.latency_delta_pct || 0) >= 0 ? "+" : ""}${pct(regression.latency_delta_pct)} · errors ${Number(regression.error_delta_pct || 0) >= 0 ? "+" : ""}${pct(regression.error_delta_pct)}`
+          : "no comparable direct sample";
+        const label = regression.flags?.length ? `investigate: ${regression.flags.join(", ")}` : regression.available ? "no regression flag" : detail;
+        return `<tr>
+        <td title="${esc(row.chain_hops || "direct")}">${esc(row.chain_mode || "direct")}</td>
+        <td>${fmt(row.requests || 0)}</td><td>${fmt(row.tokens_in || 0)}</td><td>${fmt(row.tokens_out || 0)}</td>
+        <td>${usd(row.cost_usd || 0)}</td><td>${pct(row.error_rate_pct || 0)}</td><td>${ms(row.latency_p95_ms)}</td><td>${ms(row.latency_p99_ms)}</td>
+        <td title="${esc(detail)}">${esc(label)}</td>
+      </tr>`;
+      }).join("") : '<tr><td colspan="9" class="muted">no durable chain traffic in this window</td></tr>';
+    }
+
+    function renderModelQuality(j) {
+      const rows = j.comparisons || [];
+      $("model-quality-count").textContent = `${rows.length} comparison${rows.length === 1 ? "" : "s"}`;
+      $("model-quality-body").innerHTML = rows.length ? rows.map(row => {
+        const regression = row.observational_regression || {};
+        const detail = regression.available
+          ? `p95 ${Number(regression.latency_delta_pct || 0) >= 0 ? "+" : ""}${pct(regression.latency_delta_pct)} · errors ${Number(regression.error_delta_pct || 0) >= 0 ? "+" : ""}${pct(regression.error_delta_pct)}`
+          : "no comparable direct sample";
+        const label = regression.flags?.length ? `investigate: ${regression.flags.join(", ")}` : regression.available ? "no regression flag" : detail;
+        return `<tr><td>${esc(row.model)}</td><td>${esc(row.chain_mode)}</td><td>${fmt(row.requests || 0)}</td>
+          <td>${pct(row.error_rate_pct || 0)}</td><td>${ms(row.latency_p95_ms)}</td><td title="${esc(detail)}">${esc(label)}</td></tr>`;
+      }).join("") : '<tr><td colspan="6" class="muted">no optimized model traffic in this window</td></tr>';
+    }
+
+    function renderOperations(j) {
+      $("operations-badge").textContent = j.durable ? "persisted" : "unavailable";
+      $("operations-badge").className = `badge ${j.durable ? "ok" : "fail"}`;
+      $("op-requests").textContent = fmt(j.requests || 0);
+      $("op-db-size").textContent = bytes(j.db_size_bytes);
+      $("op-history-size").textContent = `${bytes(j.history_size_bytes)} · ${fmt(j.history_files || 0)} file(s)`;
+      $("op-retention").textContent = j.retention_days ? `${j.retention_days} days` : "never prune";
+      $("op-last-request").textContent = j.last_request_ts ? new Date(j.last_request_ts * 1000).toLocaleString() : "none";
+      $("operations-events").textContent = (j.events || []).map(event =>
+        `${new Date((event.ts || 0) * 1000).toLocaleString()}  ${event.service}/${event.event}${event.detail ? ` · ${event.detail}` : ""}`
+      ).join("\n") || "No lifecycle events recorded yet.";
     }
 
     function renderDetect(j) {
@@ -515,15 +764,17 @@
       state.sessions = j.sessions || [];
       $("session-count").textContent = `${state.sessions.length} sessions`;
       $("sessions-body").innerHTML = state.sessions.length ? state.sessions.map(s => `
-        <tr class="clickable" role="button" tabindex="0" aria-label="Open session ${esc(short(s.session_id, 16))}" data-session="${esc(s.session_id)}">
+        <tr class="clickable${s.session_id === selectedSessionId ? " selected" : ""}" role="button" tabindex="0" aria-label="Open session ${esc(short(s.session_id, 16))}" data-session="${esc(s.session_id)}">
           <td>${age(s.last_ts)}</td>
           <td title="${esc(s.session_id)}">${esc(short(s.session_id, 16))}</td>
           <td>${fmt(s.requests || 0)}</td>
           <td>${fmt((s.tokens_in || 0) + (s.tokens_out || 0))}</td>
+          <td>${fmt(s.measured_tokens_saved || 0)}${Number(s.estimated_tokens_saved || 0) ? ` · ${fmt(s.estimated_tokens_saved)} est.` : ""}</td>
+          <td>${fmt(s.measured_attempts || 0)} measured / ${fmt(s.unavailable_attempts || 0)} unavailable</td>
           <td>${usd(s.cost_usd || 0)}</td>
           <td>${esc(s.chain_mode || "")}</td>
         </tr>
-      `).join("") : '<tr><td colspan="6" class="muted">no sessions yet</td></tr>';
+      `).join("") : '<tr><td colspan="8" class="muted">no sessions yet</td></tr>';
       document.querySelectorAll("[data-session]").forEach(row => {
         const activate = () => loadSession(row.dataset.session);
         row.onclick = activate;
@@ -534,21 +785,46 @@
           }
         };
       });
+      if (restoreSessionOnFirstRender) {
+        restoreSessionOnFirstRender = false;
+        loadSession(selectedSessionId);
+      }
     }
 
     async function loadSession(sessionId) {
+      if (!sessionId) return;
       const sequence = ++sessionLoadSequence;
+      selectedSessionId = sessionId;
+      localStorage.setItem(SESSION_SELECTION_KEY, sessionId);
+      document.querySelectorAll("[data-session]").forEach(row => row.classList.toggle("selected", row.dataset.session === sessionId));
       $("session-title").textContent = `Session ${sessionId}`;
       $("session-detail").textContent = "Loading session...";
       try {
         const j = await getJSON(`/api/metrics/session/${encodeURIComponent(sessionId)}`);
         if (sequence !== sessionLoadSequence) return;
+        if (!(j.requests || []).length) {
+          selectedSessionId = "";
+          localStorage.removeItem(SESSION_SELECTION_KEY);
+          $("session-title").textContent = "Session Detail";
+          $("session-detail").textContent = "This saved session is no longer available.";
+          document.querySelectorAll("[data-session]").forEach(row => row.classList.remove("selected"));
+          return;
+        }
         $("session-detail").textContent = (j.requests || []).map(r => {
+          const attempts = r.optimizer_attempts || [];
+          const optimizerSummary = attempts.length ? attempts.map(a => {
+            const confidence = a.savings_confidence || "unavailable";
+            const savings = confidence === "unavailable"
+              ? "measurement unavailable"
+              : `${confidence} saved ${fmt(a.tokens_saved || 0)}`;
+            return `${a.optimizer || "optimizer"}: ${a.applied ? "applied" : "bypassed"}${a.bypass_reason ? ` (${a.bypass_reason})` : ""}; ${savings}${a.optimizer_latency_ms != null ? `; ${ms(a.optimizer_latency_ms)}` : ""}`;
+          }).join("\n    ") : "no optimizer measurement reported";
           return [
             `${new Date((r.ts || 0) * 1000).toLocaleString()} ${r.method} ${r.path}`,
             `  status=${r.status} model=${r.model || "-"} stream=${!!r.is_stream}`,
             `  latency=${ms(r.latency_ms)} first_byte=${ms(r.first_byte_ms)} tokens=${fmt((r.tokens_in || 0) + (r.tokens_out || 0))} cost=${usd(r.cost_est_usd)}`,
             `  request_id=${r.request_id || "-"} hops=${r.chain_hops || "-"} err=${r.err_class || "-"}`,
+            `  optimizer: ${optimizerSummary}`,
           ].join("\n");
         }).join("\n\n") || "No requests in session.";
       } catch (err) {
@@ -557,7 +833,55 @@
       }
     }
 
-    function renderHistory(items, replace = false) {
+    async function loadRequest(rowId) {
+      if (!rowId) return;
+      const sequence = ++requestLoadSequence;
+      selectedRequestRowId = String(rowId);
+      localStorage.setItem(REQUEST_SELECTION_KEY, selectedRequestRowId);
+      document.querySelectorAll("[data-request]").forEach(row => row.classList.toggle("selected", row.dataset.request === selectedRequestRowId));
+      $("request-detail-title").textContent = `Request ${rowId}`;
+      $("request-detail").textContent = "Loading request...";
+      try {
+        const j = await getJSON(`/api/metrics/request/${encodeURIComponent(rowId)}`);
+        if (sequence !== requestLoadSequence) return;
+        const r = j.request || {};
+        if (!r.id) {
+          selectedRequestRowId = "";
+          localStorage.removeItem(REQUEST_SELECTION_KEY);
+          $("request-detail-title").textContent = "Request Detail";
+          $("request-detail").textContent = "This saved request is no longer available.";
+          document.querySelectorAll("[data-request]").forEach(row => row.classList.remove("selected"));
+          return;
+        }
+        const attempts = j.optimizer_attempts || [];
+        $("request-detail").textContent = [
+          `${new Date((r.ts || 0) * 1000).toLocaleString()} ${r.method || ""} ${r.path || ""}`,
+          `status=${r.status ?? "-"} model=${r.model || "-"} stream=${!!r.is_stream}`,
+          `input=${fmt(r.tokens_in || 0)} output=${fmt(r.tokens_out || 0)} cache read/write=${fmt(r.cache_read_tokens || 0)} / ${fmt(r.cache_write_tokens || 0)}`,
+          `cost=${usd(r.cost_est_usd)} latency=${ms(r.latency_ms)} first byte=${ms(r.first_byte_ms)}`,
+          `chain=${r.chain_mode || "direct"} hops=${r.chain_hops || "direct"} upstream=${r.upstream || "-"}`,
+          `request_id=${r.request_id || "-"} session=${r.session_id || "-"} error=${r.err_class || "-"}`,
+          `optimizer attempts: ${attempts.length ? JSON.stringify(attempts, null, 2) : "none recorded"}`,
+        ].join("\n");
+      } catch (err) {
+        if (sequence !== requestLoadSequence) return;
+        if (String(err.message).endsWith(" 404")) {
+          selectedRequestRowId = "";
+          localStorage.removeItem(REQUEST_SELECTION_KEY);
+          document.querySelectorAll("[data-request]").forEach(row => row.classList.remove("selected"));
+        }
+        $("request-detail").textContent = `Could not load request: ${err.message}`;
+      }
+    }
+
+    function renderHistory(payload, replace = false) {
+      const items = Array.isArray(payload) ? payload : payload?.items;
+      if (!Array.isArray(payload)) {
+        $("history-badge").textContent = payload?.durable ? "persisted" : "live only";
+        historyNextBeforeId = payload?.next_before_id || null;
+        $("history-load-more").hidden = !historyNextBeforeId;
+        $("history-load-more").textContent = "load older requests";
+      }
       if (items) {
         const merged = replace ? items : [...state.history, ...items];
         const unique = new Map();
@@ -571,12 +895,24 @@
       }
       $("history-body").innerHTML = state.history.length ? state.history.slice().reverse().map(r => {
         const cls = r.status >= 500 ? "status-fail" : r.status >= 400 ? "status-warn" : "status-ok";
-        return `<tr>
+        const attrs = r.id ? ` class="clickable${String(r.id) === selectedRequestRowId ? " selected" : ""}" role="button" tabindex="0" aria-label="Open request ${esc(r.id)}" data-request="${esc(r.id)}"` : "";
+        return `<tr${attrs}>
           <td>${age(r.ts)}</td><td>${esc(r.method || "")}</td><td>${esc(r.path || "")}</td><td>${esc(r.model || "")}</td>
           <td class="${cls}">${r.status ?? ""}</td><td>${ms(r.latency_ms)}</td><td>${ms(r.first_byte_ms)}</td>
           <td>${fmt((r.tokens_in || 0) + (r.tokens_out || 0))}</td><td>${usd(r.cost_est_usd || 0)}</td><td>${esc(short(r.session_id, 10))}</td>
         </tr>`;
       }).join("") : '<tr><td colspan="10" class="muted">no requests yet</td></tr>';
+      document.querySelectorAll("[data-request]").forEach(row => {
+        const activate = () => loadRequest(row.dataset.request);
+        row.onclick = activate;
+        row.onkeydown = ev => {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); activate(); }
+        };
+      });
+      if (restoreRequestOnFirstRender) {
+        restoreRequestOnFirstRender = false;
+        loadRequest(selectedRequestRowId);
+      }
     }
 
     function chartBars(id, rows) {
@@ -628,22 +964,35 @@
       if (refreshInFlight) return;
       refreshInFlight = true;
       try {
-        const [status, capture, detect, summary, series, sessions, history, compare] = await Promise.all([
+        const bucket = ["7d", "30d"].includes(dashboardWindow) ? "1h" : "1m";
+        const [status, capture, detect, summary, efficiency, efficiencySeries, chains, modelQuality, operations, series, sessions, history, compare] = await Promise.all([
           getJSON("/api/status"),
           getJSON("/api/capture"),
           getJSON("/api/tool/detect"),
-          getJSON("/api/metrics/summary?window=1h"),
-          getJSON("/api/metrics/timeseries?window=1h&bucket=1m"),
-          getJSON("/api/metrics/sessions?window=24h&limit=50"),
-          getJSON("/api/history?n=50"),
+          getJSON(`/api/metrics/summary?window=${dashboardWindow}`),
+          getJSON(`/api/metrics/efficiency?window=${dashboardWindow}`),
+          getJSON(`/api/metrics/efficiency/timeseries?window=${dashboardWindow}&bucket=${bucket}`),
+          getJSON(`/api/metrics/chains?window=${dashboardWindow}`),
+          getJSON(`/api/metrics/model-quality?window=${dashboardWindow}`),
+          getJSON("/api/metrics/operations?limit=10"),
+          getJSON(`/api/metrics/timeseries?window=${dashboardWindow}&bucket=${bucket}`),
+          getJSON(`/api/metrics/sessions?window=${dashboardWindow}&limit=50`),
+          getJSON(historyUrl()),
           getJSON("/api/tool/compare"),
         ]);
         renderStatus(status);
         renderCapture(capture);
         renderDetect(detect);
         renderSummary(summary);
+        renderEfficiency(efficiency);
+        renderEfficiencyTimeseries(efficiencySeries);
+        renderModels(summary);
+        renderChains(chains);
+        renderModelQuality(modelQuality);
+        renderOperations(operations);
+        $("timeseries-window").textContent = `last ${dashboardWindow}`;
         renderSessions(sessions);
-        renderHistory(history.items || [], true);
+        renderHistory(history, true);
         renderCompare(compare);
         chartLine("latency-chart", series.series || [], "latency_p95_ms", "Gateway latency p95");
         chartLine("request-chart", series.series || [], "requests", "Requests per bucket");
@@ -663,7 +1012,7 @@
     function connectEvents() {
       try {
         if (eventSource) eventSource.close();
-        eventSource = new EventSource("/api/events/stream?window=1h");
+        eventSource = new EventSource(`/api/events/stream?window=${dashboardWindow}`);
         eventSource.onopen = () => {
           $("stream-badge").textContent = "live";
           $("stream-badge").className = "badge ok";
@@ -675,7 +1024,7 @@
           try { renderCompare(JSON.parse(ev.data)); } catch (_) {}
         });
         eventSource.addEventListener("history", ev => {
-          try { renderHistory((JSON.parse(ev.data).items || [])); } catch (_) {}
+          try { JSON.parse(ev.data); refreshHistory(); } catch (_) {}
         });
         eventSource.onerror = () => {
           $("stream-badge").textContent = "polling";
@@ -757,6 +1106,23 @@
         if (next) selectLogTab(next);
       });
     });
+    $("window-select").addEventListener("change", ev => {
+      dashboardWindow = ev.target.value;
+      localStorage.setItem(DASHBOARD_WINDOW_KEY, dashboardWindow);
+      connectEvents();
+      refreshAll();
+    });
+    $("history-filter-apply").addEventListener("click", () => {
+      for (const key of Object.keys(historyFilters)) historyFilters[key] = $("history-" + key).value.trim();
+      localStorage.setItem(HISTORY_FILTERS_KEY, JSON.stringify(historyFilters));
+      refreshHistory();
+    });
+    $("history-load-more").addEventListener("click", loadOlderHistory);
+    $("history-export").addEventListener("click", () => { window.location.assign(historyExportUrl()); });
+    document.querySelectorAll("#history-model, #history-chain, #history-session").forEach(input => input.addEventListener("keydown", ev => {
+      if (ev.key === "Enter") $("history-filter-apply").click();
+    }));
+    $("history-status").addEventListener("change", () => $("history-filter-apply").click());
     document.querySelectorAll("iframe[data-src], iframe[id$='-native-frame']").forEach(frame => {
       const details = frame.closest("details");
       details?.addEventListener("toggle", () => {

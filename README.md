@@ -234,14 +234,20 @@ It includes:
   - pxpipe: saved input tokens, all-spend savings percentage, compressed-request coverage, A/B cost split, PNG throughput
   - Squeezr: saved tokens, expand-rate quality signal, mode/circuit-breaker state, latency p95, technique breakdown
 - live log tail via SSE for each service (`supervisor`, `gateway`, `headroom`, `pxpipe`, `squeezr`)
-- native pxpipe and Squeezr dashboards load lazily from their own ports inside collapsed accordions, keeping third-party UI code off the sensitive apx dashboard origin
+- native Headroom, pxpipe, and Squeezr dashboards load lazily from their own ports inside collapsed accordions when the gateway is loopback-only; the unified dashboard remains the remote-safe view, keeping third-party UI code off the authenticated apx dashboard origin
 
 JSON APIs for scripting:
 
 ```text
 GET /api/status                         overall mode + health + counters
-GET /api/history?n=100                  in-memory gateway history
+GET /api/history?n=100                  recent gateway history (SQLite-backed when enabled)
+GET /api/history/export.csv             filtered durable request metadata export (up to 10,000 rows)
 GET /api/metrics/summary?window=1h      request/status/token/cost aggregate
+GET /api/metrics/efficiency?window=1h   observed tokens + verified per-request optimizer savings
+GET /api/metrics/efficiency/timeseries?window=1h  measured and estimated savings as separate series
+GET /api/metrics/chains?window=24h      observed token/cost/latency/error comparison by chain
+GET /api/metrics/model-quality?window=24h  direct-versus-optimized quality comparison per model
+GET /api/metrics/operations?limit=10   metrics-store freshness, retention, and gateway lifecycle events
 GET /api/metrics/timeseries?window=1h   bucketed latency/request/token series
 GET /api/metrics/sessions?window=24h    grouped sessions
 GET /api/metrics/session/<id>           per-request session detail
@@ -256,6 +262,12 @@ GET /api/logs/stream?service=gateway    Server-Sent Events log tail
 ```
 
 Disable the dashboard entirely by setting `APX_DASHBOARD_ENABLED=0` in `~/.config/apx/config.env`. The gateway keeps proxying normally either way.
+
+When exposing the Gateway beyond loopback, LeanRelay keeps Headroom, pxpipe,
+and Squeezr on `APX_INTERNAL_HOST=127.0.0.1`. Native third-party dashboards
+are intentionally hidden from a remotely bound LeanRelay dashboard: serving
+their UI under the authenticated dashboard origin would give third-party code
+access to that origin. Use the unified LeanRelay metrics dashboard remotely.
 
 ### Capture and Local Metrics
 

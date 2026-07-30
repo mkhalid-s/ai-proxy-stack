@@ -68,6 +68,7 @@ load_config() {
   # shellcheck disable=SC1090
   source "$CONFIG_FILE"
   : "${BIND_HOST:=127.0.0.1}"
+  : "${APX_INTERNAL_HOST:=127.0.0.1}"
   : "${GATEWAY_PORT:=8787}"
   : "${PXPIPE_PORT:=47821}"
   : "${HEADROOM_PORT:=8788}"
@@ -85,10 +86,10 @@ load_config() {
   : "${PXPIPE_MODELS:=claude-fable-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5}"
   : "${HEADROOM_CMD:=headroom proxy}"
   : "${PXPIPE_TARGET_API_URL:=https://api.anthropic.com}"
-  : "${HEADROOM_TARGET_API_URL:=http://$BIND_HOST:$PXPIPE_PORT}"
+  : "${HEADROOM_TARGET_API_URL:=http://$APX_INTERNAL_HOST:$PXPIPE_PORT}"
   : "${APX_TARGET_API_URL:=https://api.anthropic.com}"
   : "${SQUEEZR_TARGET_API_URL:=$APX_TARGET_API_URL}"
-  : "${GATEWAY_TARGET_API_URL:=http://$BIND_HOST:$HEADROOM_PORT}"
+  : "${GATEWAY_TARGET_API_URL:=http://$APX_INTERNAL_HOST:$HEADROOM_PORT}"
   : "${HEADROOM_MODE:=token}"
   : "${HEADROOM_ENABLE_TOOL_SEARCH:=true}"
   : "${HEADROOM_CODE_AWARE_ENABLED:=1}"
@@ -211,10 +212,10 @@ export_ca_bundle() {
 }
 
 gateway_ok() { url_ok "http://$BIND_HOST:$GATEWAY_PORT/livez"; }
-pxpipe_ok() { url_ok "http://$BIND_HOST:$PXPIPE_PORT/"; }
-headroom_ok() { url_ok "http://$BIND_HOST:$HEADROOM_PORT/livez"; }
+pxpipe_ok() { url_ok "http://$APX_INTERNAL_HOST:$PXPIPE_PORT/"; }
+headroom_ok() { url_ok "http://$APX_INTERNAL_HOST:$HEADROOM_PORT/livez"; }
 squeezr_ok() {
-  curl -fsS --max-time 3 "http://$BIND_HOST:$SQUEEZR_PORT/squeezr/health" 2>/dev/null \
+  curl -fsS --max-time 3 "http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/health" 2>/dev/null \
     | grep -q '"identity"[[:space:]]*:[[:space:]]*"squeezr"'
 }
 
@@ -306,7 +307,7 @@ start_gateway() {
     export APX_MAX_REQUEST_BYTES="$APX_MAX_REQUEST_BYTES" APX_MAX_EVENT_STREAMS_PER_IP="$APX_MAX_EVENT_STREAMS_PER_IP" APX_HEALTH_INTERVAL_SECONDS="$HEALTH_INTERVAL_SECONDS"
     export APX_CHAIN="${APX_CHAIN:-}" APX_LOG_LEVEL="$APX_LOG_LEVEL"
     export APX_STATE_DIR="$STATE_DIR" APX_LOG_DIR="$LOG_DIR" APX_CONFIG="$CONFIG_FILE"
-    export APX_HEADROOM_URL="http://$BIND_HOST:$HEADROOM_PORT" APX_PXPIPE_URL="http://$BIND_HOST:$PXPIPE_PORT" APX_SQUEEZR_URL="http://$BIND_HOST:$SQUEEZR_PORT"
+    export APX_HEADROOM_URL="http://$APX_INTERNAL_HOST:$HEADROOM_PORT" APX_PXPIPE_URL="http://$APX_INTERNAL_HOST:$PXPIPE_PORT" APX_SQUEEZR_URL="http://$APX_INTERNAL_HOST:$SQUEEZR_PORT"
     exec bash -lc "export PATH=\"$PATH\"; exec $GATEWAY_CMD"
   ) >> "$log_file" 2>&1 &
   echo $! > "$RUN_DIR/gateway.pid"
@@ -332,14 +333,14 @@ start_squeezr() {
       return 1
     fi
   fi
-  log "starting Squeezr on $BIND_HOST:$SQUEEZR_PORT -> $SQUEEZR_TARGET_API_URL"
+  log "starting Squeezr on $APX_INTERNAL_HOST:$SQUEEZR_PORT -> $SQUEEZR_TARGET_API_URL"
   (
     cd "$WORKDIR"
     export_ca_bundle
-    export SQUEEZR_PORT="$SQUEEZR_PORT" SQUEEZR_MITM_PORT="$SQUEEZR_MITM_PORT" SQUEEZR_DAEMON=1
+    export SQUEEZR_PORT="$SQUEEZR_PORT" SQUEEZR_MITM_PORT="$SQUEEZR_MITM_PORT" SQUEEZR_DAEMON=1 HOST="$APX_INTERNAL_HOST" SQUEEZR_HOST="$APX_INTERNAL_HOST"
     export SQUEEZR_PACKAGE_SPEC SQUEEZR_TARGET_API_URL APX_LOG_LEVEL
-    export ANTHROPIC_BASE_URL="http://$BIND_HOST:$SQUEEZR_PORT"
-    export openai_base_url="http://$BIND_HOST:$SQUEEZR_PORT" GEMINI_API_BASE_URL="http://$BIND_HOST:$SQUEEZR_PORT"
+    export ANTHROPIC_BASE_URL="http://$APX_INTERNAL_HOST:$SQUEEZR_PORT"
+    export openai_base_url="http://$APX_INTERNAL_HOST:$SQUEEZR_PORT" GEMINI_API_BASE_URL="http://$APX_INTERNAL_HOST:$SQUEEZR_PORT"
     exec bash -lc "export PATH=\"$PATH\"; exec $SQUEEZR_CMD $SQUEEZR_EXTRA_ARGS"
   ) >> "$log_file" 2>&1 &
   echo $! > "$RUN_DIR/squeezr.pid"
@@ -365,11 +366,11 @@ start_pxpipe() {
       return 1
     fi
   fi
-  log "starting pxpipe on $BIND_HOST:$PXPIPE_PORT"
+  log "starting pxpipe on $APX_INTERNAL_HOST:$PXPIPE_PORT"
   (
     cd "$WORKDIR"
     export_ca_bundle
-    export PORT="$PXPIPE_PORT" PXPIPE_PORT="$PXPIPE_PORT" HOST="$BIND_HOST" PXPIPE_MODELS="$PXPIPE_MODELS" ANTHROPIC_UPSTREAM="$PXPIPE_TARGET_API_URL" APX_LOG_LEVEL="$APX_LOG_LEVEL"
+    export PORT="$PXPIPE_PORT" PXPIPE_PORT="$PXPIPE_PORT" HOST="$APX_INTERNAL_HOST" PXPIPE_MODELS="$PXPIPE_MODELS" ANTHROPIC_UPSTREAM="$PXPIPE_TARGET_API_URL" APX_LOG_LEVEL="$APX_LOG_LEVEL"
     exec bash -lc "export PATH=\"$PATH\"; exec $PXPIPE_CMD $PXPIPE_EXTRA_ARGS"
   ) >> "$log_file" 2>&1 &
   echo $! > "$RUN_DIR/pxpipe.pid"
@@ -377,7 +378,7 @@ start_pxpipe() {
 }
 
 headroom_args() {
-  local args="--host '$BIND_HOST' --port '$HEADROOM_PORT' --mode '$HEADROOM_MODE'"
+  local args="--host '$APX_INTERNAL_HOST' --port '$HEADROOM_PORT' --mode '$HEADROOM_MODE'"
   [[ "$HEADROOM_NO_RATE_LIMIT" == "1" ]] && args="$args --no-rate-limit"
   [[ "$HEADROOM_NO_SUBSCRIPTION_TRACKING" == "1" ]] && args="$args --no-subscription-tracking"
   [[ "$HEADROOM_NO_TELEMETRY" == "1" ]] && args="$args --no-telemetry"
@@ -404,7 +405,7 @@ start_headroom() {
       return 1
     fi
   fi
-  log "starting Headroom on $BIND_HOST:$HEADROOM_PORT -> $HEADROOM_TARGET_API_URL"
+  log "starting Headroom on $APX_INTERNAL_HOST:$HEADROOM_PORT -> $HEADROOM_TARGET_API_URL"
   (
     cd "$WORKDIR"
     export_ca_bundle
@@ -1404,7 +1405,7 @@ service_label() {
 service_url() {
   local port
   port="$(service_port "$1")"
-  [[ -n "$port" ]] && echo "http://$BIND_HOST:$port"
+  [[ -n "$port" ]] && echo "http://$APX_INTERNAL_HOST:$port"
 }
 
 service_known() {
@@ -1478,7 +1479,7 @@ chain_description() {
   local parts=("Claude" "Gateway($BIND_HOST:$GATEWAY_PORT)") svc
   if (( ${#APX_CHAIN_ARR[@]} > 0 )); then
     for svc in "${APX_CHAIN_ARR[@]}"; do
-      parts+=("$(service_label "$svc")($BIND_HOST:$(service_port "$svc"))")
+      parts+=("$(service_label "$svc")($APX_INTERNAL_HOST:$(service_port "$svc"))")
     done
   fi
   parts+=("upstream")
@@ -2187,7 +2188,7 @@ status() {
   echo "Headroom:  pidfile=${hpid:-none} listener=${hport:-none} health=$hhealth"
   echo "Squeezr:   pidfile=${sqpid:-none} listener=${sqport:-none} health=$sqhealth"
   if [[ "$SQUEEZR_ENABLED" == "1" ]]; then
-    echo "Squeezr dashboard: http://$BIND_HOST:$SQUEEZR_PORT/squeezr/dashboard"
+    echo "Squeezr dashboard: http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/dashboard"
   fi
   echo "logs: $LOG_DIR"
 }
@@ -2433,12 +2434,12 @@ debug_command() {
 
 dashboard_urls() {
   load_config
-  echo "pxpipe dashboard: http://$BIND_HOST:$PXPIPE_PORT/"
+  echo "pxpipe dashboard: http://$APX_INTERNAL_HOST:$PXPIPE_PORT/"
   echo "Gateway health:   http://$BIND_HOST:$GATEWAY_PORT/livez"
-  echo "Headroom health:  http://$BIND_HOST:$HEADROOM_PORT/livez"
-  echo "Headroom stats:   http://$BIND_HOST:$HEADROOM_PORT/stats"
-  echo "Squeezr health:   http://$BIND_HOST:$SQUEEZR_PORT/squeezr/health"
-  echo "Squeezr dashboard:http://$BIND_HOST:$SQUEEZR_PORT/squeezr/dashboard"
+  echo "Headroom health:  http://$APX_INTERNAL_HOST:$HEADROOM_PORT/livez"
+  echo "Headroom stats:   http://$APX_INTERNAL_HOST:$HEADROOM_PORT/stats"
+  echo "Squeezr health:   http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/health"
+  echo "Squeezr dashboard:http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/dashboard"
 }
 
 open_dashboard() {

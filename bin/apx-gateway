@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import collections
+import csv
 import hashlib
 import http.client
+import io
 import json
 import mimetypes
 import os
@@ -359,7 +361,7 @@ def _derive_session_id(headers: Any, model: str | None, body: bytes) -> str:
 
 
 # --- SQLite metrics store ---------------------------------------------------
-_METRICS_SCHEMA_VERSION = 2
+_METRICS_SCHEMA_VERSION = 3
 _METRICS_DDL = [
     """
     CREATE TABLE IF NOT EXISTS schema_version (
@@ -409,6 +411,34 @@ _METRICS_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id, ts)",
     "CREATE INDEX IF NOT EXISTS idx_requests_model ON requests(model, ts)",
     "CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status, ts)",
+    """
+    CREATE TABLE IF NOT EXISTS optimizer_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      request_id INTEGER NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+      optimizer TEXT NOT NULL,
+      applied INTEGER NOT NULL DEFAULT 0,
+      bypass_reason TEXT,
+      technique TEXT,
+      input_tokens_before INTEGER,
+      input_tokens_after INTEGER,
+      tokens_saved INTEGER,
+      savings_confidence TEXT NOT NULL DEFAULT 'unavailable',
+      optimizer_latency_ms REAL,
+      raw_metrics TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_optimizer_attempts_request ON optimizer_attempts(request_id)",
+    "CREATE INDEX IF NOT EXISTS idx_optimizer_attempts_optimizer ON optimizer_attempts(optimizer)",
+    """
+    CREATE TABLE IF NOT EXISTS service_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts REAL NOT NULL,
+      service TEXT NOT NULL,
+      event TEXT NOT NULL,
+      detail TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_service_events_ts ON service_events(ts)",
 ]
 
 
@@ -495,9 +525,9 @@ class MetricsStore:
             cur = self._conn.execute("SELECT COUNT(*) FROM requests")
             return int(cur.fetchone()[0]) == 0
 
-    def insert(self, row: dict[str, Any]) -> None:
+    def insert(self, row: dict[str, Any], optimizer_attempts: Iterable[dict[str, Any]] = ()) -> int | None:
         if not self.enabled or self._conn is None:
-            return
+            return None
         cols = (
             "ts", "request_id", "session_id", "method", "path", "model", "status",
             "latency_ms", "first_byte_ms", "tokens_in", "tokens_out",
@@ -511,13 +541,45 @@ class MetricsStore:
         placeholders = ",".join(["?"] * len(cols))
         try:
             with self._lock:
-                self._conn.execute(
+                cur = self._conn.execute(
                     f"INSERT INTO requests({','.join(cols)}) VALUES ({placeholders})",
                     values,
                 )
+                self._insert_optimizer_attempts(int(cur.lastrowid), optimizer_attempts)
                 self._secure_files()
+                return int(cur.lastrowid)
         except Exception as exc:  # noqa: BLE001
             log(f"metrics insert failed: {exc}")
+        return None
+
+    def _insert_optimizer_attempts(self, request_row_id: int, attempts: Iterable[dict[str, Any]]) -> None:
+        """Persist only optimizer measurements explicitly supplied by an adapter."""
+        stmt = (
+            "INSERT INTO optimizer_attempts(request_id, optimizer, applied, bypass_reason, technique, "
+            "input_tokens_before, input_tokens_after, tokens_saved, savings_confidence, optimizer_latency_ms, raw_metrics) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        for attempt in attempts:
+            optimizer = str(attempt.get("optimizer") or "").strip()
+            if not optimizer:
+                continue
+            confidence = str(attempt.get("savings_confidence") or "unavailable").lower()
+            if confidence not in {"measured", "estimated", "unavailable"}:
+                confidence = "unavailable"
+            before = attempt.get("input_tokens_before")
+            after = attempt.get("input_tokens_after")
+            saved = attempt.get("tokens_saved")
+            if confidence == "unavailable":
+                before = after = saved = None
+            raw = attempt.get("raw_metrics")
+            if raw is not None and not isinstance(raw, str):
+                raw = json.dumps(raw, separators=(",", ":"), default=str)
+            self._conn.execute(
+                stmt,
+                (request_row_id, optimizer, int(bool(attempt.get("applied"))), attempt.get("bypass_reason"),
+                 attempt.get("technique"), before, after, saved, confidence,
+                 attempt.get("optimizer_latency_ms"), raw),
+            )
 
     def bulk_insert(self, rows: Iterable[dict[str, Any]]) -> int:
         if not self.enabled or self._conn is None:
@@ -564,6 +626,18 @@ class MetricsStore:
         finally:
             conn.close()
 
+    def record_service_event(self, service: str, event: str, detail: str = "") -> None:
+        if not self.enabled or self._conn is None:
+            return
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO service_events(ts, service, event, detail) VALUES (?, ?, ?, ?)",
+                    (time.time(), service[:80], event[:80], detail[:2000]),
+                )
+        except Exception as exc:  # noqa: BLE001
+            log(f"service event insert failed: {exc}")
+
     def backfill_completed(self) -> bool:
         if not self.enabled or self._conn is None:
             return True
@@ -586,7 +660,12 @@ class MetricsStore:
         if not self.enabled or self._conn is None:
             return 0
         with self._lock:
+            self._conn.execute(
+                "DELETE FROM optimizer_attempts WHERE request_id IN (SELECT id FROM requests WHERE ts < ?)",
+                (cutoff_ts,),
+            )
             cur = self._conn.execute("DELETE FROM requests WHERE ts < ?", (cutoff_ts,))
+            self._conn.execute("DELETE FROM service_events WHERE ts < ?", (cutoff_ts,))
             return cur.rowcount or 0
 
     def checkpoint(self) -> None:
@@ -1008,6 +1087,7 @@ def _record_request(
     request_body: str | None = None,
     response_body: str | None = None,
     request_headers: str | None = None,
+    optimizer_attempts: Iterable[dict[str, Any]] = (),
 ) -> None:
     cost = _cost_estimate(model, tokens_in, tokens_out)
     ts = time.time()
@@ -1055,7 +1135,7 @@ def _record_request(
     sqlite_row["request_body"] = request_body if CAPTURE_LEVEL == "full" else None
     sqlite_row["response_body"] = response_body if CAPTURE_LEVEL == "full" else None
     sqlite_row["request_headers"] = request_headers if CAPTURE_LEVEL == "full" else None
-    METRICS.insert(sqlite_row)
+    METRICS.insert(sqlite_row, optimizer_attempts)
 
 
 def _log_targets() -> dict[str, str]:
@@ -1254,8 +1334,9 @@ def _api_metrics_summary(query: dict[str, list[str]]) -> dict[str, Any]:
     by_model: dict[str, dict[str, Any]] = {}
     for r in rows:
         m = (r.get("model") or "").strip() or "unknown"
-        e = by_model.setdefault(m, {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0, "latency_p50_ms": 0.0, "_lats": []})
+        e = by_model.setdefault(m, {"requests": 0, "errors": 0, "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0, "latency_p50_ms": 0.0, "_lats": []})
         e["requests"] += 1
+        e["errors"] += int((r.get("status") or 0) >= 400)
         e["tokens_in"] += int(r.get("tokens_in") or 0)
         e["tokens_out"] += int(r.get("tokens_out") or 0)
         e["cost_usd"] += float(r.get("cost_est_usd") or 0)
@@ -1264,6 +1345,8 @@ def _api_metrics_summary(query: dict[str, list[str]]) -> dict[str, Any]:
         lats = sorted(e.pop("_lats"))
         e["latency_p50_ms"] = round(_percentile(lats, 50), 2)
         e["latency_p95_ms"] = round(_percentile(lats, 95), 2)
+        e["latency_p99_ms"] = round(_percentile(lats, 99), 2)
+        e["error_rate_pct"] = round((e["errors"] / e["requests"] * 100) if e["requests"] else 0.0, 2)
         e["cost_usd"] = round(e["cost_usd"], 6)
     return {
         "window": window,
@@ -1294,6 +1377,344 @@ def _api_metrics_summary(query: dict[str, list[str]]) -> dict[str, Any]:
             "p95": round(_percentile(first_bytes, 95), 2),
         },
         "by_model": by_model,
+    }
+
+
+def _api_history(query: dict[str, list[str]]) -> dict[str, Any]:
+    """Return durable request history, newest page first in storage order.
+
+    The dashboard reverses the returned page for chronological rendering. SQLite
+    is intentionally preferred so a gateway restart never clears history.
+    """
+    limit = _bounded_int(query.get("n", ["100"])[0], 100, 1, 500)
+    before = _bounded_int(query.get("before_id", [""])[0], 2**63 - 1, 1, 2**63 - 1)
+    model = (query.get("model", [""])[0] or "").strip()[:128]
+    chain = (query.get("chain", [""])[0] or "").strip()[:128]
+    session = (query.get("session", [""])[0] or "").strip()[:128]
+    status_filter = (query.get("status", [""])[0] or "").strip().lower()
+    clauses = ["id < ?"]
+    params: list[Any] = [before]
+    if model:
+        clauses.append("model = ?")
+        params.append(model)
+    if chain:
+        clauses.append("chain_mode = ?")
+        params.append(chain)
+    if session:
+        clauses.append("session_id = ?")
+        params.append(session)
+    status_ranges = {"2xx": (200, 399), "4xx": (400, 499), "5xx": (500, 599)}
+    if status_filter in status_ranges:
+        low, high = status_ranges[status_filter]
+        clauses.append("status BETWEEN ? AND ?")
+        params.extend((low, high))
+    elif status_filter == "error":
+        clauses.append("status >= ?")
+        params.append(400)
+    if METRICS.enabled:
+        rows = METRICS.query(
+            "SELECT id, ts, request_id, session_id, method, path, model, status, latency_ms, first_byte_ms, "
+            "tokens_in, tokens_out, cache_read_tokens, cache_write_tokens, cost_est_usd, bytes_in, bytes_out, "
+            "chain_mode, chain_hops, hop_timings, upstream, is_stream, tool_call_count, err_class, capture_level "
+            "FROM requests WHERE " + " AND ".join(clauses) + " ORDER BY id DESC LIMIT ?",
+            tuple(params + [limit]),
+        )
+        next_before = rows[-1]["id"] if len(rows) == limit else None
+        rows.reverse()
+        return {"items": rows, "size": HISTORY_SIZE, "durable": True, "next_before_id": next_before}
+    with _HISTORY_LOCK:
+        items = list(_HISTORY)
+    def matches(item: dict) -> bool:
+        if model and item.get("model") != model:
+            return False
+        if chain and item.get("chain_mode") != chain:
+            return False
+        if session and item.get("session_id") != session:
+            return False
+        status = int(item.get("status") or 0)
+        if status_filter in status_ranges:
+            low, high = status_ranges[status_filter]
+            return low <= status <= high
+        return status_filter != "error" or status >= 400
+    items = [item for item in items if matches(item)][-limit:]
+    return {"items": items, "size": HISTORY_SIZE, "durable": False, "next_before_id": None}
+
+
+def _history_export_csv(query: dict[str, list[str]]) -> bytes:
+    """Export filtered, metadata-only durable history with a hard row cap."""
+    if not METRICS.enabled:
+        return b""
+    limit = _bounded_int(query.get("limit", ["1000"])[0], 1000, 1, 10_000)
+    model = (query.get("model", [""])[0] or "").strip()[:128]
+    chain = (query.get("chain", [""])[0] or "").strip()[:128]
+    session = (query.get("session", [""])[0] or "").strip()[:128]
+    status_filter = (query.get("status", [""])[0] or "").strip().lower()
+    clauses: list[str] = []
+    params: list[Any] = []
+    for column, value in (("model", model), ("chain_mode", chain), ("session_id", session)):
+        if value:
+            clauses.append(f"{column} = ?")
+            params.append(value)
+    status_ranges = {"2xx": (200, 399), "4xx": (400, 499), "5xx": (500, 599)}
+    if status_filter in status_ranges:
+        low, high = status_ranges[status_filter]
+        clauses.append("status BETWEEN ? AND ?")
+        params.extend((low, high))
+    elif status_filter == "error":
+        clauses.append("status >= ?")
+        params.append(400)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    fields = (
+        "id", "ts", "request_id", "session_id", "method", "path", "model", "status",
+        "latency_ms", "first_byte_ms", "tokens_in", "tokens_out", "cache_read_tokens",
+        "cache_write_tokens", "cost_est_usd", "bytes_in", "bytes_out", "chain_mode",
+        "chain_hops", "upstream", "is_stream", "tool_call_count", "err_class", "capture_level",
+    )
+    rows = METRICS.query(
+        f"SELECT {','.join(fields)} FROM requests{where} ORDER BY id DESC LIMIT ?",
+        tuple(params + [limit]),
+    )
+    out = io.StringIO(newline="")
+    writer = csv.DictWriter(out, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return out.getvalue().encode("utf-8")
+
+
+def _api_metrics_efficiency(query: dict[str, list[str]]) -> dict[str, Any]:
+    """Return observed token use plus only explicitly measured optimizer savings."""
+    window = (query.get("window", ["1h"])[0] or "1h").lower()
+    since = time.time() - _window_seconds(window)
+    if not METRICS.enabled:
+        return {
+            "window": window,
+            "since_ts": since,
+            "durable": False,
+            "observed": {},
+            "optimizers": [],
+            "note": "durable efficiency measurements require SQLite metrics",
+        }
+    observed_rows = METRICS.query(
+        "SELECT COUNT(*) AS requests, SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out, "
+        "SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens, "
+        "SUM(cost_est_usd) AS cost_est_usd FROM requests WHERE ts >= ?",
+        (since,),
+    )
+    observed = observed_rows[0] if observed_rows else {}
+    attempts = METRICS.query(
+        "SELECT oa.optimizer, COUNT(*) AS attempts, SUM(CASE WHEN oa.applied = 1 THEN 1 ELSE 0 END) AS applied, "
+        "SUM(CASE WHEN oa.savings_confidence = 'measured' THEN 1 ELSE 0 END) AS measured_attempts, "
+        "SUM(CASE WHEN oa.savings_confidence = 'estimated' THEN 1 ELSE 0 END) AS estimated_attempts, "
+        "SUM(CASE WHEN oa.savings_confidence = 'unavailable' THEN 1 ELSE 0 END) AS unavailable_attempts, "
+        "SUM(CASE WHEN oa.savings_confidence = 'measured' THEN oa.tokens_saved ELSE 0 END) AS measured_tokens_saved, "
+        "SUM(CASE WHEN oa.savings_confidence = 'estimated' THEN oa.tokens_saved ELSE 0 END) AS estimated_tokens_saved, "
+        "AVG(oa.optimizer_latency_ms) AS optimizer_latency_avg_ms "
+        "FROM optimizer_attempts oa JOIN requests r ON r.id = oa.request_id "
+        "WHERE r.ts >= ? GROUP BY oa.optimizer ORDER BY oa.optimizer",
+        (since,),
+    )
+    bypass_rows = METRICS.query(
+        "SELECT oa.optimizer, oa.bypass_reason, COUNT(*) AS count "
+        "FROM optimizer_attempts oa JOIN requests r ON r.id = oa.request_id "
+        "WHERE r.ts >= ? AND oa.bypass_reason IS NOT NULL AND oa.bypass_reason != '' "
+        "GROUP BY oa.optimizer, oa.bypass_reason ORDER BY oa.optimizer, count DESC",
+        (since,),
+    )
+    bypasses: dict[str, list[dict[str, Any]]] = {}
+    for row in bypass_rows:
+        bypasses.setdefault(str(row["optimizer"]), []).append({
+            "reason": row["bypass_reason"], "count": int(row["count"] or 0),
+        })
+    for row in attempts:
+        row["bypass_reasons"] = bypasses.get(str(row["optimizer"]), [])
+    return {
+        "window": window,
+        "since_ts": since,
+        "durable": True,
+        "observed": observed,
+        "optimizers": attempts,
+        "note": "Savings are reported only when an optimizer adapter supplies explicit pre/post measurements.",
+    }
+
+
+def _api_metrics_efficiency_timeseries(query: dict[str, list[str]]) -> dict[str, Any]:
+    window = (query.get("window", ["1h"])[0] or "1h").lower()
+    bucket = (query.get("bucket", ["1m"])[0] or "1m").lower()
+    since = time.time() - _window_seconds(window)
+    bucket_seconds = _bucket_seconds(bucket)
+    if not METRICS.enabled:
+        return {"window": window, "bucket": bucket, "since_ts": since, "durable": False, "series": []}
+    rows = METRICS.query(
+        "SELECT r.ts, oa.savings_confidence, oa.tokens_saved FROM optimizer_attempts oa "
+        "JOIN requests r ON r.id = oa.request_id WHERE r.ts >= ? ORDER BY r.ts ASC",
+        (since,),
+    )
+    grouped: dict[int, dict[str, int]] = {}
+    for row in rows:
+        bucket_ts = int(float(row["ts"] or 0) // bucket_seconds) * bucket_seconds
+        entry = grouped.setdefault(bucket_ts, {"measured_tokens_saved": 0, "estimated_tokens_saved": 0})
+        saved = int(row["tokens_saved"] or 0)
+        if row["savings_confidence"] == "measured":
+            entry["measured_tokens_saved"] += saved
+        elif row["savings_confidence"] == "estimated":
+            entry["estimated_tokens_saved"] += saved
+    series = [
+        {"ts": ts, "measured_tokens_saved": values["measured_tokens_saved"], "estimated_tokens_saved": values["estimated_tokens_saved"]}
+        for ts, values in sorted(grouped.items())
+    ]
+    return {"window": window, "bucket": bucket, "since_ts": since, "durable": True, "series": series}
+
+
+def _api_metrics_chains(query: dict[str, list[str]]) -> dict[str, Any]:
+    """Compare observed traffic by chain without inferring a direct baseline."""
+    window = (query.get("window", ["24h"])[0] or "24h").lower()
+    since = time.time() - _window_seconds(window)
+    if METRICS.enabled:
+        rows = METRICS.query(
+            "SELECT chain_mode, chain_hops, status, latency_ms, tokens_in, tokens_out, cost_est_usd "
+            "FROM requests WHERE ts >= ? ORDER BY chain_mode, ts",
+            (since,),
+        )
+    else:
+        with _HISTORY_LOCK:
+            rows = [dict(r) for r in _HISTORY if r.get("ts", 0) >= since]
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        mode = str(row.get("chain_mode") or "direct")
+        hops = str(row.get("chain_hops") or "")
+        entry = grouped.setdefault((mode, hops), {
+            "chain_mode": mode, "chain_hops": hops, "requests": 0, "errors": 0,
+            "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0, "_latencies": [],
+        })
+        entry["requests"] += 1
+        entry["errors"] += int((row.get("status") or 0) >= 400)
+        entry["tokens_in"] += int(row.get("tokens_in") or 0)
+        entry["tokens_out"] += int(row.get("tokens_out") or 0)
+        entry["cost_usd"] += float(row.get("cost_est_usd") or 0)
+        entry["_latencies"].append(float(row.get("latency_ms") or 0))
+    chains = []
+    for entry in grouped.values():
+        latencies = sorted(entry.pop("_latencies"))
+        entry["error_rate_pct"] = round((entry["errors"] / entry["requests"] * 100) if entry["requests"] else 0.0, 2)
+        entry["latency_p50_ms"] = round(_percentile(latencies, 50), 2)
+        entry["latency_p95_ms"] = round(_percentile(latencies, 95), 2)
+        entry["latency_p99_ms"] = round(_percentile(latencies, 99), 2)
+        entry["cost_usd"] = round(entry["cost_usd"], 6)
+        chains.append(entry)
+    direct = next((entry for entry in chains if entry["chain_mode"] == "direct"), None)
+    for entry in chains:
+        comparison = {"available": False, "flags": [], "latency_delta_pct": None, "error_delta_pct": None}
+        if direct and entry is not direct and direct["requests"] >= 10 and entry["requests"] >= 10:
+            comparison["available"] = True
+            direct_p95 = float(direct["latency_p95_ms"] or 0)
+            if direct_p95 > 0:
+                comparison["latency_delta_pct"] = round((entry["latency_p95_ms"] - direct_p95) / direct_p95 * 100, 2)
+            comparison["error_delta_pct"] = round(entry["error_rate_pct"] - direct["error_rate_pct"], 2)
+            if comparison["latency_delta_pct"] is not None and comparison["latency_delta_pct"] >= 20:
+                comparison["flags"].append("p95 latency +20% or more")
+            if comparison["error_delta_pct"] >= 1:
+                comparison["flags"].append("error rate +1 point or more")
+        entry["observational_regression"] = comparison
+    chains.sort(key=lambda entry: (-entry["requests"], entry["chain_mode"]))
+    return {
+        "window": window,
+        "since_ts": since,
+        "durable": METRICS.enabled,
+        "chains": chains,
+        "note": "Regression flags compare aggregate traffic with direct mode in the same window; they are observational, not workload-normalized causal measurements.",
+    }
+
+
+def _api_metrics_model_quality(query: dict[str, list[str]]) -> dict[str, Any]:
+    """Compare optimized-chain quality with direct traffic for the same model."""
+    window = (query.get("window", ["24h"])[0] or "24h").lower()
+    since = time.time() - _window_seconds(window)
+    if METRICS.enabled:
+        rows = METRICS.query(
+            "SELECT model, chain_mode, status, latency_ms FROM requests WHERE ts >= ? ORDER BY model, chain_mode, ts",
+            (since,),
+        )
+    else:
+        with _HISTORY_LOCK:
+            rows = [dict(row) for row in _HISTORY if row.get("ts", 0) >= since]
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        model = str(row.get("model") or "unknown")
+        chain = str(row.get("chain_mode") or "direct")
+        entry = grouped.setdefault((model, chain), {"model": model, "chain_mode": chain, "requests": 0, "errors": 0, "_latencies": []})
+        entry["requests"] += 1
+        entry["errors"] += int((row.get("status") or 0) >= 400)
+        entry["_latencies"].append(float(row.get("latency_ms") or 0))
+    direct_by_model: dict[str, dict[str, Any]] = {}
+    for entry in grouped.values():
+        latencies = sorted(entry.pop("_latencies"))
+        entry["error_rate_pct"] = round((entry["errors"] / entry["requests"] * 100) if entry["requests"] else 0.0, 2)
+        entry["latency_p95_ms"] = round(_percentile(latencies, 95), 2)
+        if entry["chain_mode"] == "direct":
+            direct_by_model[entry["model"]] = entry
+    comparisons = []
+    for entry in grouped.values():
+        direct = direct_by_model.get(entry["model"])
+        comparison = {"available": False, "flags": [], "latency_delta_pct": None, "error_delta_pct": None}
+        if direct and entry is not direct and direct["requests"] >= 10 and entry["requests"] >= 10:
+            comparison["available"] = True
+            if direct["latency_p95_ms"] > 0:
+                comparison["latency_delta_pct"] = round((entry["latency_p95_ms"] - direct["latency_p95_ms"]) / direct["latency_p95_ms"] * 100, 2)
+            comparison["error_delta_pct"] = round(entry["error_rate_pct"] - direct["error_rate_pct"], 2)
+            if comparison["latency_delta_pct"] is not None and comparison["latency_delta_pct"] >= 20:
+                comparison["flags"].append("p95 latency +20% or more")
+            if comparison["error_delta_pct"] >= 1:
+                comparison["flags"].append("error rate +1 point or more")
+        entry["observational_regression"] = comparison
+        if entry["chain_mode"] != "direct":
+            comparisons.append(entry)
+    comparisons.sort(key=lambda entry: (entry["model"], entry["chain_mode"]))
+    return {
+        "window": window,
+        "since_ts": since,
+        "durable": METRICS.enabled,
+        "comparisons": comparisons,
+        "note": "Comparisons use direct traffic for the same model in the same window and are observational, not workload-normalized causal measurements.",
+    }
+
+
+def _api_metrics_operations(query: dict[str, list[str]]) -> dict[str, Any]:
+    limit = _bounded_int(query.get("limit", ["20"])[0], 20, 1, 100)
+    db_size = 0
+    for path in (METRICS.path, f"{METRICS.path}-wal", f"{METRICS.path}-shm"):
+        try:
+            db_size += os.path.getsize(path)
+        except OSError:
+            pass
+    history_size = 0
+    history_files = 0
+    try:
+        for name in os.listdir(HISTORY_DIR):
+            if not name.endswith(".jsonl"):
+                continue
+            history_files += 1
+            try:
+                history_size += os.path.getsize(os.path.join(HISTORY_DIR, name))
+            except OSError:
+                pass
+    except OSError:
+        pass
+    if not METRICS.enabled:
+        return {"durable": False, "sqlite_error": METRICS.error, "events": [], "db_size_bytes": db_size, "history_size_bytes": history_size, "history_files": history_files}
+    freshness = METRICS.query("SELECT MAX(ts) AS last_request_ts, COUNT(*) AS requests FROM requests")
+    events = METRICS.query(
+        "SELECT id, ts, service, event, detail FROM service_events ORDER BY id DESC LIMIT ?",
+        (limit,),
+    )
+    return {
+        "durable": True,
+        "db_size_bytes": db_size,
+        "history_size_bytes": history_size,
+        "history_files": history_files,
+        "retention_days": METRICS_RETENTION_DAYS,
+        "last_request_ts": (freshness[0].get("last_request_ts") if freshness else None),
+        "requests": int((freshness[0].get("requests") if freshness else 0) or 0),
+        "events": events,
     }
 
 
@@ -1395,6 +1816,25 @@ def _api_metrics_sessions(query: dict[str, list[str]]) -> dict[str, Any]:
             rows.append(e)
         rows.sort(key=lambda x: x["last_ts"], reverse=True)
         rows = rows[:limit]
+    if METRICS.enabled and rows:
+        efficiency_rows = METRICS.query(
+            "SELECT r.session_id, COUNT(oa.id) AS attempts, "
+            "SUM(CASE WHEN oa.savings_confidence = 'measured' THEN oa.tokens_saved ELSE 0 END) AS measured_tokens_saved, "
+            "SUM(CASE WHEN oa.savings_confidence = 'estimated' THEN oa.tokens_saved ELSE 0 END) AS estimated_tokens_saved, "
+            "SUM(CASE WHEN oa.savings_confidence = 'measured' THEN 1 ELSE 0 END) AS measured_attempts, "
+            "SUM(CASE WHEN oa.savings_confidence = 'unavailable' THEN 1 ELSE 0 END) AS unavailable_attempts "
+            "FROM requests r JOIN optimizer_attempts oa ON oa.request_id = r.id "
+            "WHERE r.ts >= ? AND r.session_id != '' GROUP BY r.session_id",
+            (since,),
+        )
+        efficiency_by_session = {str(entry["session_id"]): entry for entry in efficiency_rows}
+        for row in rows:
+            values = efficiency_by_session.get(str(row.get("session_id") or ""), {})
+            row["optimizer_attempts"] = int(values.get("attempts") or 0)
+            row["measured_tokens_saved"] = int(values.get("measured_tokens_saved") or 0)
+            row["estimated_tokens_saved"] = int(values.get("estimated_tokens_saved") or 0)
+            row["measured_attempts"] = int(values.get("measured_attempts") or 0)
+            row["unavailable_attempts"] = int(values.get("unavailable_attempts") or 0)
     return {"window": window, "sessions": rows, "count": len(rows)}
 
 
@@ -1413,6 +1853,19 @@ def _api_metrics_session_detail(session_id: str, query: dict[str, list[str]]) ->
     else:
         with _HISTORY_LOCK:
             rows = [dict(r) for r in _HISTORY if r.get("session_id") == session_id]
+    if METRICS.enabled and rows:
+        attempts = METRICS.query(
+            "SELECT request_id, optimizer, applied, bypass_reason, technique, input_tokens_before, "
+            "input_tokens_after, tokens_saved, savings_confidence, optimizer_latency_ms "
+            "FROM optimizer_attempts WHERE request_id IN ("
+            + ",".join("?" for _ in rows) + ") ORDER BY id ASC",
+            tuple(r["id"] for r in rows),
+        )
+        by_request: dict[int, list[dict[str, Any]]] = {}
+        for attempt in attempts:
+            by_request.setdefault(int(attempt["request_id"]), []).append(attempt)
+        for row in rows:
+            row["optimizer_attempts"] = by_request.get(int(row["id"]), [])
     # Include full bodies only when explicitly requested AND capture=full.
     if query.get("include_body", ["0"])[0] in ("1", "true", "yes") and CAPTURE_LEVEL == "full" and METRICS.enabled:
         detail = METRICS.query(
@@ -1427,6 +1880,33 @@ def _api_metrics_session_detail(session_id: str, query: dict[str, list[str]]) ->
             r["response_body"] = d.get("response_body")
             r["request_headers"] = d.get("request_headers")
     return {"session_id": session_id, "requests": rows, "count": len(rows)}
+
+
+def _api_metrics_request_detail(request_row_id: str) -> tuple[int, dict[str, Any]]:
+    try:
+        row_id = int(request_row_id)
+    except (TypeError, ValueError):
+        return 400, {"error": "request id must be a positive integer"}
+    if row_id < 1:
+        return 400, {"error": "request id must be a positive integer"}
+    if not METRICS.enabled:
+        return 503, {"error": "durable request detail requires SQLite metrics"}
+    rows = METRICS.query(
+        "SELECT id, ts, request_id, session_id, method, path, model, status, latency_ms, first_byte_ms, "
+        "tokens_in, tokens_out, cache_read_tokens, cache_write_tokens, cost_est_usd, bytes_in, bytes_out, "
+        "chain_mode, chain_hops, hop_timings, upstream, is_stream, tool_call_count, err_class, capture_level "
+        "FROM requests WHERE id = ? LIMIT 1",
+        (row_id,),
+    )
+    if not rows:
+        return 404, {"error": "request not found"}
+    attempts = METRICS.query(
+        "SELECT optimizer, applied, bypass_reason, technique, input_tokens_before, input_tokens_after, "
+        "tokens_saved, savings_confidence, optimizer_latency_ms FROM optimizer_attempts "
+        "WHERE request_id = ? ORDER BY id ASC",
+        (row_id,),
+    )
+    return 200, {"request": rows[0], "optimizer_attempts": attempts}
 
 
 # --- Tool proxy endpoints (feature-detect + per-tool aggregate) --------------
@@ -1872,10 +2352,18 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._respond_json(200, self._build_status_payload())
             return True
         if path == "/api/history":
-            n = _bounded_int((query.get("n", ["100"])[0]), 100, 1, HISTORY_SIZE)
-            with _HISTORY_LOCK:
-                items = list(_HISTORY)[-n:]
-            self._respond_json(200, {"items": items, "size": HISTORY_SIZE})
+            self._respond_json(200, _api_history(query))
+            return True
+        if path == "/api/history/export.csv":
+            if not METRICS.enabled:
+                self._respond_json(503, {"error": "durable CSV export requires SQLite metrics"})
+                return True
+            self._respond(
+                200,
+                _history_export_csv(query),
+                content_type="text/csv; charset=utf-8",
+                extra_headers={"content-disposition": "attachment; filename=apx-request-history.csv"},
+            )
             return True
         if path == "/api/headroom/stats":
             try:
@@ -1888,6 +2376,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path == "/api/metrics/summary":
             self._respond_json(200, _api_metrics_summary(query))
             return True
+        if path == "/api/metrics/efficiency":
+            self._respond_json(200, _api_metrics_efficiency(query))
+            return True
+        if path == "/api/metrics/efficiency/timeseries":
+            self._respond_json(200, _api_metrics_efficiency_timeseries(query))
+            return True
+        if path == "/api/metrics/chains":
+            self._respond_json(200, _api_metrics_chains(query))
+            return True
+        if path == "/api/metrics/model-quality":
+            self._respond_json(200, _api_metrics_model_quality(query))
+            return True
+        if path == "/api/metrics/operations":
+            self._respond_json(200, _api_metrics_operations(query))
+            return True
         if path == "/api/metrics/timeseries":
             self._respond_json(200, _api_metrics_timeseries(query))
             return True
@@ -1897,6 +2400,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/metrics/session/"):
             sid = unquote(path[len("/api/metrics/session/") :])
             self._respond_json(200, _api_metrics_session_detail(sid, query))
+            return True
+        if path.startswith("/api/metrics/request/"):
+            request_row_id = unquote(path[len("/api/metrics/request/") :])
+            status, payload = _api_metrics_request_detail(request_row_id)
+            self._respond_json(status, payload)
             return True
         if path == "/api/tool/detect":
             self._respond_json(200, _api_tool_detect())
@@ -2051,6 +2559,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         cfg = _load_config_values()
         mode = _current_mode(cfg)
         hops = _chain_hops(cfg, mode)
+        remote_bind = BIND_HOST not in ("127.0.0.1", "::1", "localhost")
         with _STATS_LOCK:
             req = _STATS["requests"]
             avg = (_STATS["latency_sum_ms"] / req) if req else 0.0
@@ -2070,9 +2579,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "squeezr_url": SQUEEZR_URL,
             "stats": stats_snapshot,
             "bind_host": BIND_HOST,
+            "security": {
+                "remote_bind": remote_bind,
+                "dashboard_auth": bool(DASHBOARD_TOKEN),
+                "transport": "http",
+                "tls_terminated": False,
+                "optimizer_host": cfg.get("APX_INTERNAL_HOST", "127.0.0.1"),
+            },
             "bind_warning": (
-                "bound to non-loopback host; dashboard exposes logs and history"
-                if BIND_HOST not in ("127.0.0.1", "::1", "localhost")
+                "bound to non-loopback host over HTTP; terminate TLS before exposing beyond a trusted network"
+                if remote_bind
                 else ""
             ),
         }
@@ -2704,6 +3220,7 @@ def main() -> int:
     if METRICS_DB_ENABLED:
         if METRICS.open():
             log(f"metrics: SQLite store ready at {METRICS.path}")
+            METRICS.record_service_event("gateway", "started", f"version={_read_version()} target={TARGET_URL}")
             try:
                 _backfill_from_jsonl()
             except Exception as exc:  # noqa: BLE001
@@ -2751,6 +3268,7 @@ def main() -> int:
     try:
         httpd.serve_forever()
     finally:
+        METRICS.record_service_event("gateway", "stopped", "graceful shutdown")
         httpd.server_close()
         METRICS.close()
         with _HISTORY_FH_LOCK:

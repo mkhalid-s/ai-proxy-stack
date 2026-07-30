@@ -59,7 +59,7 @@ data from their APIs.
 - keep one host Gateway available to Claude Code running inside a devcontainer
 - inspect request/session latency, token usage, cache activity, and error rates
 - run a local proxy stack through launchd and recover it after process failure
-- pin, upgrade, roll back, or remove the complete stack predictably
+- pin, upgrade, roll back, or remove the complete apx stack predictably
 - diagnose whether a failure originates in the Gateway, a local optimizer, or the final upstream
 
 ## Benefits
@@ -624,6 +624,19 @@ apx support-bundle --output apx-support.tgz --tail 300
 ```
 
 `logs headroom` follows both the stack-managed Headroom stdout log and Headroom's detailed proxy request log at `~/.headroom/logs/proxy.log`. Use `logs headroom.proxy` when you only want request/error details. `APX_LOG_LEVEL` accepts `info`, `debug`, or `trace`; the value is propagated to Gateway, Headroom, pxpipe, and Squeezr child processes. `support-bundle` creates a metadata-only tarball with redacted config and log tails; it intentionally excludes request/response bodies, metrics databases, history JSONL, certs, and dependency caches.
+
+### Help me recover
+
+Use this order when something does not look right:
+
+1. Run `apx status`. A failed health check identifies the component to inspect.
+2. Open the dashboard and read **Needs Attention**. An unavailable savings value means missing telemetry, not zero savings.
+3. Run `apx doctor`, then inspect the affected log: `apx logs gateway`, `apx logs headroom`, `apx logs pxpipe`, or `apx logs squeezr`.
+4. For a persistent issue, create a redacted bundle: `apx support-bundle --output apx-support.tgz --tail 300`.
+
+Common fixes: use the persistent `apx pxpipe models set ...` and `apx headroom settings set ...` commands instead of one-shot environment variables; use `apx optimizer` before altering an optimizer command or package; and use `apx uninstall --purge --dry-run` before deleting local data.
+
+Further self-service guides: [dashboard metrics](docs/DASHBOARD_METRICS.md) and [optimizer ownership](docs/OPTIMIZER_OWNERSHIP.md).
 
 ## URLs
 

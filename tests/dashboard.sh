@@ -5,6 +5,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/apx-dashboard.XXXXXX")"
 trap '[[ -n "${gateway_pid:-}" ]] && kill "$gateway_pid" 2>/dev/null || true; wait "${gateway_pid:-}" 2>/dev/null || true; rm -rf "$TMP"' EXIT
 
+# The shell is intentionally minimal: semantic landmarks, an associated time
+# window label, and a small-screen layout must survive asset rebuilds.
+grep -q '<html lang="en">' "$ROOT/share/dashboard.html"
+grep -q '<main>' "$ROOT/share/dashboard.html"
+grep -q 'for="window-select"' "$ROOT/share/dashboard.html"
+grep -q '@media (max-width: 560px)' "$ROOT/share/dashboard.html"
+
 PORT="$(python3 - <<'PY'
 import socket
 s = socket.socket()
@@ -49,6 +56,60 @@ grep -q 'svelte-overview' "$TMP/app.js"
 grep -q 'Verified tokens saved' "$TMP/app.js"
 grep -q 'Token flow' "$TMP/app.js"
 grep -qi '^cache-control: no-cache' "$TMP/asset-headers"
+
+# Seed only durable, explicit measurements. The overview must never need to
+# infer token savings from aggregate traffic to show its central cards.
+python3 - "$TMP/state/metrics.db" <<'PY'
+import sqlite3
+import sys
+import time
+
+db = sqlite3.connect(sys.argv[1])
+now = time.time()
+cur = db.execute(
+    """INSERT INTO requests(
+      ts, request_id, session_id, method, path, model, status, latency_ms,
+      first_byte_ms, tokens_in, tokens_out, cache_read_tokens,
+      cache_write_tokens, cost_est_usd, bytes_in, bytes_out, chain_mode,
+      chain_hops, hop_timings, upstream, is_stream, tool_call_count,
+      err_class, capture_level, source_key
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+    (now, "fixture-request", "fixture-session", "POST", "/v1/messages",
+     "claude-sonnet-5", 200, 42.0, 12.0, 1200, 300, 240, 0, 0.012,
+     1024, 512, "headroom,pxpipe", "headroom,pxpipe", "", "fixture",
+     0, 1, "", "metadata", "fixture-request"),
+)
+request_id = cur.lastrowid
+db.execute(
+    """INSERT INTO optimizer_attempts(
+      request_id, optimizer, applied, bypass_reason, technique,
+      input_tokens_before, input_tokens_after, tokens_saved,
+      savings_confidence, optimizer_latency_ms, raw_metrics
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+    (request_id, "headroom", 1, None, "fixture", 1500, 1200, 300,
+     "measured", 4.0, "{}"),
+)
+db.execute(
+    "INSERT INTO optimizer_snapshots(ts, optimizer, reachable, normalized) VALUES (?, ?, ?, ?)",
+    (now, "headroom", 1, "{}"),
+)
+db.commit()
+db.close()
+PY
+
+curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/summary?window=1h" -o "$TMP/summary.json"
+curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/efficiency?window=1h" -o "$TMP/efficiency.json"
+python3 - "$TMP/summary.json" "$TMP/efficiency.json" <<'PY'
+import json
+import sys
+
+summary = json.load(open(sys.argv[1], encoding="utf-8"))
+efficiency = json.load(open(sys.argv[2], encoding="utf-8"))
+assert summary["totals"]["tokens_in"] == 1200
+assert summary["totals"]["tokens_out"] == 300
+assert efficiency["durable"] is True
+assert efficiency["optimizers"][0]["measured_tokens_saved"] == 300
+PY
 curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/attention?window=1h" -o "$TMP/attention.json"
 python3 - "$TMP/attention.json" <<'PY'
 import json

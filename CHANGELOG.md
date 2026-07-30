@@ -6,6 +6,10 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Fresh pxpipe configurations include `claude-opus-5` in the exact model allowlist.
+
 ## [0.6.0] - 2026-07-30
 
 ### Added

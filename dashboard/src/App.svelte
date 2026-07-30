@@ -8,6 +8,8 @@
   /** @type {any} */ let summary = {};
   /** @type {{ alerts: any[] }} */ let attention = { alerts: [] };
   /** @type {any[]} */ let series = [];
+  /** @type {any[]} */ let optimizerSnapshots = [];
+  /** @type {any[]} */ let optimizerMetrics = [];
   let loading = true;
   let error = "";
   /** @type {HTMLElement | undefined} */ let latencyTarget;
@@ -69,14 +71,18 @@
     error = "";
     windowValue = currentWindow();
     try {
-      const [nextSummary, nextAttention, nextSeries] = await Promise.all([
+      const [nextSummary, nextAttention, nextSeries, nextEfficiency, nextSnapshots] = await Promise.all([
         getJSON(`/api/metrics/summary?window=${windowValue}`),
         getJSON(`/api/metrics/attention?window=${windowValue}`),
         getJSON(`/api/metrics/timeseries?window=${windowValue}&bucket=${bucketFor(windowValue)}`),
+        getJSON(`/api/metrics/efficiency?window=${windowValue}`),
+        getJSON(`/api/metrics/optimizer-snapshots?window=${windowValue}`),
       ]);
       summary = nextSummary;
       attention = nextAttention;
       series = nextSeries.series || [];
+      optimizerMetrics = nextEfficiency.optimizers || [];
+      optimizerSnapshots = nextSnapshots.snapshots || [];
       await tick();
       syncPlots();
     } catch (cause) {
@@ -105,6 +111,12 @@
       requestsPlot?.destroy();
     };
   });
+
+  /** @type {any[]} */ let latestOptimizerSnapshots = [];
+  $: latestOptimizerSnapshots = Object.values(optimizerSnapshots.reduce((latest, snapshot) => {
+    if (!latest[snapshot.optimizer] || Number(snapshot.ts || 0) > Number(latest[snapshot.optimizer].ts || 0)) latest[snapshot.optimizer] = snapshot;
+    return latest;
+  }, /** @type {Record<string, any>} */ ({})));
 </script>
 
 <section class="overview" aria-label="Gateway overview">
@@ -132,6 +144,37 @@
   <div class="charts">
     <article class="chart"><h3>Latency p95</h3><div class="plot" bind:this={latencyTarget}></div></article>
     <article class="chart"><h3>Requests</h3><div class="plot" bind:this={requestsTarget}></div></article>
+  </div>
+
+  <div class="optimizer-grid">
+    <article class="optimizer-health">
+      <div class="attention-heading"><h3>Persisted optimizer health</h3><span class="status">{latestOptimizerSnapshots.length} tracked</span></div>
+      {#if latestOptimizerSnapshots.length}
+        <div class="health-list">
+          {#each latestOptimizerSnapshots as snapshot (snapshot.optimizer)}
+            <div class:up={snapshot.reachable} class:down={!snapshot.reachable} class="health-row">
+              <strong>{snapshot.optimizer}</strong><span>{snapshot.reachable ? "reachable" : "unreachable"}</span><small>{new Date(Number(snapshot.ts || 0) * 1000).toLocaleString()}</small>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <p class="clear">No optimizer snapshots in this window yet.</p>
+      {/if}
+    </article>
+    <article class="optimizer-health">
+      <div class="attention-heading"><h3>Savings measurement coverage</h3><span class="status">explicit only</span></div>
+      {#if optimizerMetrics.length}
+        <div class="health-list">
+          {#each optimizerMetrics as optimizer (optimizer.optimizer)}
+            <div class="health-row">
+              <strong>{optimizer.optimizer}</strong><span>{number(optimizer.measured_attempts)}/{number(optimizer.attempts)} verified</span><small>{number(optimizer.estimated_attempts)} estimated · {number(optimizer.unavailable_attempts)} unavailable</small>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <p class="clear">No optimizer attempts in this window yet.</p>
+      {/if}
+    </article>
   </div>
 
   <div class="attention">

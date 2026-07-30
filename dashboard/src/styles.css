@@ -17,6 +17,10 @@
 .overview .metrics span, .overview small, .overview em, .overview .clear, .overview .error { color: var(--muted, #8f98aa); font-size: 12px; font-style: normal; }
 .overview .metrics strong { display: block; margin: 6px 0 2px; font-size: clamp(24px, 4vw, 36px); letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
 .overview .chart { min-width: 0; }.overview .plot { min-height: 180px; margin-top: 8px; overflow: hidden; }
+.overview .optimizer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-top: 14px; }
+.overview .optimizer-health { min-width: 0; }.overview .health-list { margin-top: 8px; }
+.overview .health-row { display: grid; grid-template-columns: minmax(80px, 1fr) auto; gap: 2px 10px; align-items: baseline; padding: 8px 0; border-top: 1px dashed var(--border, #2c3340); font-size: 12px; }
+.overview .health-row:first-child { border-top: 0; }.overview .health-row small { grid-column: 1 / -1; }.overview .health-row.up span { color: var(--ok, #31c48d); }.overview .health-row.down span { color: var(--fail, #f56565); }
 .overview .attention { margin-top: 14px; background: var(--panel, #171a21); border: 1px solid var(--border, #2c3340); border-radius: 12px; padding: 14px; }
 .overview .attention-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 10px; }
 .overview .signal { border-left: 4px solid var(--accent, #7aa2ff); background: var(--panel-2, #1f2430); }.overview .signal.warning { border-left-color: var(--warn, #f6ad55); }.overview .signal.critical { border-left-color: var(--fail, #f56565); }

@@ -6,6 +6,8 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-30
+
 ### Added
 
 - The dashboard now has a Svelte/uPlot operational overview, persisted optimizer health and measurement coverage, conservative attention signals, and authenticated asset/API integration coverage.

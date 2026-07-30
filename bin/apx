@@ -2204,6 +2204,124 @@ pxpipe_command() {
   esac
 }
 
+headroom_settings_usage() {
+  cat <<EOF
+usage: apx headroom settings <get|set> [tool-search|code-aware|code-graph] [on|off] [--no-restart]
+
+  get                                  Show apx-managed Headroom settings.
+  set tool-search|code-aware|code-graph on|off
+                                       Persist a safe feature setting and restart apx.
+
+TLS verification, telemetry, and rate-limit controls remain explicit config
+settings because they carry security, privacy, or service-policy implications.
+EOF
+}
+
+headroom_setting_key() {
+  case "$1" in
+    tool-search) echo HEADROOM_ENABLE_TOOL_SEARCH ;;
+    code-aware) echo HEADROOM_CODE_AWARE_ENABLED ;;
+    code-graph) echo HEADROOM_CODE_GRAPH ;;
+    *) return 1 ;;
+  esac
+}
+
+headroom_command() {
+  local sub="${1:-}" action setting value restart="1" key
+  case "$sub" in
+    settings)
+      shift || true
+      action="${1:-get}"
+      shift || true
+      case "$action" in
+        get|show)
+          [[ $# -eq 0 ]] || { headroom_settings_usage >&2; return 2; }
+          load_config
+          echo "tool-search=$HEADROOM_ENABLE_TOOL_SEARCH"
+          echo "code-aware=$HEADROOM_CODE_AWARE_ENABLED"
+          echo "code-graph=$HEADROOM_CODE_GRAPH"
+          ;;
+        set)
+          setting="${1:-}"
+          value="${2:-}"
+          shift 2 || true
+          while [[ $# -gt 0 ]]; do
+            case "$1" in
+              --no-restart) restart="0" ;;
+              *) headroom_settings_usage >&2; return 2 ;;
+            esac
+            shift
+          done
+          if ! key="$(headroom_setting_key "$setting")" || [[ "$value" != "on" && "$value" != "off" ]]; then
+            echo "error: choose tool-search, code-aware, or code-graph with on or off" >&2
+            return 2
+          fi
+          set_config_var "$key" "$([[ "$value" == "on" ]] && echo true || echo false)"
+          echo "Headroom $setting updated: $value"
+          if [[ "$restart" == "1" ]]; then
+            restart_service
+            echo "apx restarted; Headroom now receives the configured setting."
+          else
+            echo "not restarted; run: apx restart"
+          fi
+          ;;
+        help|-h|--help|"") headroom_settings_usage ;;
+        *) headroom_settings_usage >&2; return 2 ;;
+      esac
+      ;;
+    help|-h|--help|"") headroom_settings_usage ;;
+    *) headroom_settings_usage >&2; return 2 ;;
+  esac
+}
+
+squeezr_bypass_usage() {
+  cat <<EOF
+usage: apx squeezr bypass <get|on|off>
+
+  get       Show whether Squeezr compression is bypassed.
+  on        Disable compression while keeping Squeezr proxying and logging.
+  off       Resume compression.
+
+Squeezr persists bypass state itself across apx restarts.
+EOF
+}
+
+squeezr_bypass_request() {
+  local method="$1" payload="${2:-}" response
+  if [[ "$method" == "GET" ]]; then
+    response="$(curl -fsS --max-time 3 "http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/bypass")" || {
+      echo "error: Squeezr bypass control is unreachable" >&2; return 1;
+    }
+  else
+    response="$(curl -fsS --max-time 3 -X POST -H 'content-type: application/json' --data "$payload" "http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/bypass")" || {
+      echo "error: Squeezr bypass control is unreachable" >&2; return 1;
+    }
+  fi
+  case "$response" in
+    *'"bypassed":true'*) echo "Squeezr bypass: on (compression disabled)" ;;
+    *'"bypassed":false'*) echo "Squeezr bypass: off (compression active)" ;;
+    *) echo "error: unexpected Squeezr bypass response" >&2; return 1 ;;
+  esac
+}
+
+squeezr_command() {
+  local sub="${1:-}" action="${2:-get}"
+  case "$sub" in
+    bypass)
+      [[ $# -le 2 ]] || { squeezr_bypass_usage >&2; return 2; }
+      case "$action" in
+        get|show) load_config; squeezr_bypass_request GET ;;
+        on) load_config; squeezr_bypass_request POST '{"enabled":true}' ;;
+        off) load_config; squeezr_bypass_request POST '{"enabled":false}' ;;
+        help|-h|--help) squeezr_bypass_usage ;;
+        *) squeezr_bypass_usage >&2; return 2 ;;
+      esac
+      ;;
+    help|-h|--help|"") squeezr_bypass_usage ;;
+    *) squeezr_bypass_usage >&2; return 2 ;;
+  esac
+}
+
 status() {
   load_config
   local spid gpid ppid hpid sqpid gport pport hport sqport sstate ghealth phealth hhealth sqhealth mode installed latest
@@ -3340,7 +3458,7 @@ EOF
 
 print_completions() {
   local shell="${1:-}"
-  local cmds="start stop disable restart run status mode chain target port pxpipe claude doctor install uninstall supervisor logs support-bundle debug urls dashboard version check-updates update versions use rollback cleanup completions help"
+  local cmds="start stop disable restart run status mode chain target port headroom pxpipe squeezr claude doctor install uninstall supervisor logs support-bundle debug urls dashboard version check-updates update versions use rollback cleanup completions help"
   local modes="current headroom-pxpipe pxpipe-headroom headroom squeezr headroom-squeezr pxpipe direct off full"
   local chain_subs="get set clear ls preset help"
   local target_subs="get set reset help"
@@ -3370,7 +3488,9 @@ _apx_completions() {
     chain)    COMPREPLY=( \$(compgen -W "$chain_subs $services" -- "\$cur") ) ;;
     target)   COMPREPLY=( \$(compgen -W "$target_subs --no-restart" -- "\$cur") ) ;;
     port)     COMPREPLY=( \$(compgen -W "$port_subs $port_services --no-restart --no-claude-sync" -- "\$cur") ) ;;
+    headroom) COMPREPLY=( \$(compgen -W "settings get set tool-search code-aware code-graph on off --no-restart" -- "\$cur") ) ;;
     pxpipe)   COMPREPLY=( \$(compgen -W "models get set off --no-restart" -- "\$cur") ) ;;
+    squeezr)  COMPREPLY=( \$(compgen -W "bypass get on off" -- "\$cur") ) ;;
     claude)   COMPREPLY=( \$(compgen -W "$claude_subs local docker-host" -- "\$cur") ) ;;
     logs)     COMPREPLY=( \$(compgen -W "$log_targets --tail --no-follow" -- "\$cur") ) ;;
     debug)    COMPREPLY=( \$(compgen -W "level get set info debug trace --no-restart" -- "\$cur") ) ;;
@@ -3410,7 +3530,9 @@ ZSH
     chain) _describe -t chain 'apx chain' chain_subs && _describe -t services 'services' services ;;
     target) _describe -t target 'apx target' target_subs ;;
     port) _describe -t port 'apx port' port_subs && _describe -t port-services 'services' port_services ;;
+    headroom) _values 'headroom action' 'settings' 'get' 'set' 'tool-search' 'code-aware' 'code-graph' 'on' 'off' '--no-restart' ;;
     pxpipe) _values 'pxpipe action' 'models' 'get' 'set' 'off' '--no-restart' ;;
+    squeezr) _values 'squeezr action' 'bypass' 'get' 'on' 'off' ;;
     claude) _describe -t claude 'apx claude' claude_subs ;;
     logs) _describe -t logs 'apx log target' log_targets ;;
     debug) _values 'debug' 'level' 'get' 'set' 'info' 'debug' 'trace' '--no-restart' ;;
@@ -3455,8 +3577,11 @@ FISH
       cat <<'FISH'
 complete -c apx -n "__fish_seen_subcommand_from completions" -a "bash zsh fish install uninstall"
 complete -c apx -n "__fish_seen_subcommand_from debug" -a "level get set info debug trace --no-restart"
+complete -c apx -n "__fish_seen_subcommand_from headroom" -a "settings get set tool-search code-aware code-graph on off"
+complete -c apx -n "__fish_seen_subcommand_from headroom" -l no-restart
 complete -c apx -n "__fish_seen_subcommand_from pxpipe" -a "models get set off"
 complete -c apx -n "__fish_seen_subcommand_from pxpipe" -l no-restart
+complete -c apx -n "__fish_seen_subcommand_from squeezr" -a "bypass get on off"
 complete -c apx -n "__fish_seen_subcommand_from target" -l no-restart
 complete -c apx -n "__fish_seen_subcommand_from port" -l no-restart -l no-claude-sync
 complete -c apx -n "__fish_seen_subcommand_from uninstall" -l purge -l dry-run -l yes
@@ -3599,7 +3724,9 @@ Commands:
   chain <sub>          Get/set the routing chain (get|set|clear|ls|preset)
   target <sub>         Get/set upstream API endpoint (get|set|reset)
   port <sub>           Get/set local service ports
+  headroom settings    Get/set safe persistent Headroom features
   pxpipe models <sub>  Get/set persistent pxpipe image-model allowlist
+  squeezr bypass <sub> Get/set Squeezr compression bypass state
   claude <sub>         Configure Claude client URL (local|docker-host|custom)
   doctor               Show status plus dependency diagnostics
   install              Install/start the selected service backend
@@ -3667,7 +3794,9 @@ case "$cmd" in
   chain) chain_cli "$@" ;;
   target) target_cli "$@" ;;
   port) port_cli "$@" ;;
+  headroom) headroom_command "$@" ;;
   pxpipe) pxpipe_command "$@" ;;
+  squeezr) squeezr_command "$@" ;;
   claude) claude_command "$@" ;;
   doctor) doctor ;;
   install) install_service ;;

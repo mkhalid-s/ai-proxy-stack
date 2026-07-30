@@ -581,6 +581,29 @@ apx pxpipe models set off
 systemd because those supervisors deliberately start apx with a controlled
 environment. `apx pxpipe models set` updates the active `config.env` instead.
 
+## Optimizer Controls
+
+`apx` exposes the safe, high-signal controls of each optimizer while leaving
+security-sensitive or cost-bearing advanced controls in their native tools.
+
+```bash
+# Persist a Headroom feature choice and restart apx.
+apx headroom settings get
+apx headroom settings set tool-search on
+apx headroom settings set code-graph off
+
+# Toggle Squeezr compression without stopping proxying or logging.
+apx squeezr bypass get
+apx squeezr bypass on
+apx squeezr bypass off
+```
+
+Squeezr owns and persists its bypass state across restarts. Headroom settings
+are written to apx's `config.env`; use `--no-restart` when batching changes.
+TLS verification, telemetry, rate limiting, AI compression, backend choice,
+and destructive cache/config actions remain explicit advanced configuration so
+they cannot be changed accidentally from the common CLI path.
+
 ## Runtime Layout
 
 Source files live in this repository. Services use home-directory runtime

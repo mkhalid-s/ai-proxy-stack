@@ -130,6 +130,17 @@ if "$APX" pxpipe models set 'model,*' --no-restart >/dev/null 2>&1; then
   echo "ERROR: pxpipe models accepted a wildcard" >&2
   exit 1
 fi
+"$APX" headroom settings set tool-search off --no-restart >/dev/null
+grep -q '^HEADROOM_ENABLE_TOOL_SEARCH=false$' "$APX_CONFIG"
+if ! "$APX" headroom settings get | grep -q '^tool-search=false$'; then
+  echo "ERROR: Headroom tool-search setting did not persist" >&2
+  exit 1
+fi
+if "$APX" headroom settings set tls-strict off --no-restart >/dev/null 2>&1; then
+  echo "ERROR: Headroom settings accepted an unsafe/unsupported key" >&2
+  exit 1
+fi
+"$APX" squeezr bypass --help >/dev/null
 
 second="$("$APX" start 2>&1)"
 if [[ "$second" != *"already running"* ]]; then

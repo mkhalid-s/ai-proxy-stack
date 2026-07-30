@@ -261,6 +261,23 @@ GET /api/logs/targets                   currently available log streams
 GET /api/logs/stream?service=gateway    Server-Sent Events log tail
 ```
 
+### Optimizer telemetry contract
+
+An optimizer in the configured local chain may report request-level work with
+the response header `X-Apx-Optimizer-Metrics`. Its value is a JSON object or
+array; apx consumes it internally and does not relay it to clients.
+
+```json
+[{"optimizer":"pxpipe","applied":true,"input_tokens_before":1200,"input_tokens_after":480,"savings_confidence":"measured","optimizer_latency_ms":8.4}]
+```
+
+Supported fields are `optimizer`, `applied`, `bypass_reason`, `technique`,
+`input_tokens_before`, `input_tokens_after`, `tokens_saved`,
+`savings_confidence` (`measured`, `estimated`, or `unavailable`), and
+`optimizer_latency_ms`. apx calculates a token delta only when the adapter
+explicitly provides both before/after counts; it never infers savings from
+aggregate traffic. Malformed or incomplete claims are retained as unavailable.
+
 Disable the dashboard entirely by setting `APX_DASHBOARD_ENABLED=0` in `~/.config/apx/config.env`. The gateway keeps proxying normally either way.
 
 When exposing the Gateway beyond loopback, LeanRelay keeps Headroom, pxpipe,

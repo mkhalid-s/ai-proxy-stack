@@ -69,6 +69,11 @@ METRICS_DB_ENABLED = METRICS_DB_PATH.lower() not in ("", "off", "0", "false", "n
 METRICS_RETENTION_DAYS = int(os.environ.get("APX_METRICS_RETENTION_DAYS", "30") or "30")
 METRICS_BACKFILL = os.environ.get("APX_METRICS_BACKFILL", "1") == "1"
 
+# Optional upstream adapter contract. This response header carries a JSON
+# object or array of objects describing optimizer work for the request. It is
+# consumed by the gateway and never relayed to clients.
+OPTIMIZER_METRICS_HEADER = "x-apx-optimizer-metrics"
+
 DASHBOARD_STATIC_DIR = os.environ.get("APX_DASHBOARD_STATIC_DIR", "").strip()
 
 VERSION_FILE = os.path.join(STATE_DIR, "VERSION")
@@ -1060,6 +1065,75 @@ def _persist_history(entry: dict) -> None:
             fh.flush()
         except Exception:  # noqa: BLE001
             pass
+
+
+def _optimizer_attempts_from_headers(headers: Any) -> list[dict[str, Any]]:
+    """Normalize explicitly reported optimizer measurements; never infer them."""
+    try:
+        raw_values = headers.get_all(OPTIMIZER_METRICS_HEADER) or []
+    except AttributeError:
+        value = headers.get(OPTIMIZER_METRICS_HEADER) if headers else None
+        raw_values = [value] if value else []
+    attempts: list[dict[str, Any]] = []
+
+    def integer(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if 0 <= parsed <= 1_000_000_000 else None
+
+    def number(value: Any) -> float | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if 0 <= parsed <= 3_600_000 else None
+
+    for raw in raw_values[:4]:
+        if not isinstance(raw, str) or len(raw.encode("utf-8")) > 8192:
+            continue
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        records = payload if isinstance(payload, list) else [payload]
+        for record in records:
+            if len(attempts) >= 16:
+                return attempts
+            if not isinstance(record, dict):
+                continue
+            optimizer = str(record.get("optimizer") or "").strip()
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", optimizer):
+                continue
+            confidence = str(record.get("savings_confidence") or "unavailable").lower()
+            if confidence not in {"measured", "estimated", "unavailable"}:
+                confidence = "unavailable"
+            before = integer(record.get("input_tokens_before"))
+            after = integer(record.get("input_tokens_after"))
+            saved = integer(record.get("tokens_saved"))
+            if saved is None and before is not None and after is not None and before >= after:
+                saved = before - after
+            if confidence == "unavailable" or saved is None:
+                confidence = "unavailable"
+                before = after = saved = None
+            applied_value = record.get("applied", False)
+            attempts.append({
+                "optimizer": optimizer,
+                "applied": applied_value if isinstance(applied_value, bool) else str(applied_value).lower() in {"1", "true", "yes"},
+                "bypass_reason": str(record.get("bypass_reason") or "").strip()[:160] or None,
+                "technique": str(record.get("technique") or "").strip()[:160] or None,
+                "input_tokens_before": before,
+                "input_tokens_after": after,
+                "tokens_saved": saved,
+                "savings_confidence": confidence,
+                "optimizer_latency_ms": number(record.get("optimizer_latency_ms")),
+            })
+    return attempts
 
 
 def _record_request(
@@ -3103,12 +3177,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
             status = resp.status
             content_type = resp.getheader("content-type", "").lower()
             is_stream = "text/event-stream" in content_type
+            optimizer_attempts = _optimizer_attempts_from_headers(resp.headers)
             # Merge/append Server-Timing so we don't clobber upstream entries.
             upstream_st = resp.getheader("server-timing") or ""
             self.send_response(resp.status, resp.reason)
             for key, value in resp.getheaders():
                 lower = key.lower()
-                if lower in HOP_BY_HOP_HEADERS or lower == "server-timing":
+                if lower in HOP_BY_HOP_HEADERS or lower in {"server-timing", OPTIMIZER_METRICS_HEADER}:
                     continue
                 self.send_header(key, value)
             self.send_header("x-apx-request-id", request_id)
@@ -3211,6 +3286,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 request_body=cap_req_body,
                 response_body=cap_resp_body,
                 request_headers=cap_req_headers,
+                optimizer_attempts=optimizer_attempts,
             )
         except BrokenPipeError:
             log(f"client disconnected during {self.command} {safe_path} req_id={request_id}")

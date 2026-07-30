@@ -2165,10 +2165,10 @@ pxpipe_command() {
       shift || true
       action="${1:-get}"
       shift || true
-      load_config
       case "$action" in
         get|show)
           [[ $# -eq 0 ]] || { pxpipe_models_usage >&2; return 2; }
+          load_config
           echo "PXPIPE_MODELS=$PXPIPE_MODELS"
           ;;
         set)
@@ -2181,6 +2181,7 @@ pxpipe_command() {
             esac
             shift
           done
+          load_config
           if ! pxpipe_models_valid "$value"; then
             echo "error: PXPIPE_MODELS must be 'off' or a comma-separated list of exact model IDs" >&2
             return 2

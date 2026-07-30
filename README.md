@@ -621,6 +621,39 @@ TLS verification, telemetry, rate limiting, AI compression, backend choice,
 and destructive cache/config actions remain explicit advanced configuration so
 they cannot be changed accidentally from the common CLI path.
 
+## Optimizer Ownership and Versions
+
+Start here before changing an optimizer installation:
+
+```bash
+apx optimizer
+apx status
+```
+
+`apx optimizer` is read-only. It shows each optimizer's source, configured
+command or package spec, ownership label, and any locally reported Headroom
+version. `apx status` includes the same ownership label next to service health.
+
+- `external` means the optimizer was installed or configured by the user. apx
+  will never install, upgrade, remove, or rewrite its command.
+- `apx-managed` means an earlier apx install recorded ownership. Only these
+  installs may become eligible for an explicit reconcile operation.
+- `configured-default` means pxpipe uses apx's default `npx` command; it is
+  not an apx-owned global npm package.
+- `apx-managed-helper` means apx owns the local Squeezr launcher helper, not
+  the underlying npm package cache.
+
+Version reconciliation is intentionally dry-run-only at present:
+
+```bash
+apx optimizer reconcile headroom 1.2.3 --dry-run
+```
+
+It prints the planned official PyPI package change without installing,
+upgrading, restarting, or deleting anything. It refuses external installs;
+pxpipe and Squeezr reconciliation are not enabled yet. apx never performs an
+automatic optimizer update.
+
 ## Runtime Layout
 
 Source files live in this repository. Services use home-directory runtime

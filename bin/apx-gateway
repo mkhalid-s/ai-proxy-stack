@@ -366,7 +366,7 @@ def _derive_session_id(headers: Any, model: str | None, body: bytes) -> str:
 
 
 # --- SQLite metrics store ---------------------------------------------------
-_METRICS_SCHEMA_VERSION = 3
+_METRICS_SCHEMA_VERSION = 4
 _METRICS_DDL = [
     """
     CREATE TABLE IF NOT EXISTS schema_version (
@@ -444,6 +444,16 @@ _METRICS_DDL = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_service_events_ts ON service_events(ts)",
+    """
+    CREATE TABLE IF NOT EXISTS optimizer_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts REAL NOT NULL,
+      optimizer TEXT NOT NULL,
+      reachable INTEGER NOT NULL,
+      normalized TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_optimizer_snapshots_optimizer_ts ON optimizer_snapshots(optimizer, ts)",
 ]
 
 
@@ -643,6 +653,19 @@ class MetricsStore:
         except Exception as exc:  # noqa: BLE001
             log(f"service event insert failed: {exc}")
 
+    def record_optimizer_snapshot(self, optimizer: str, reachable: bool, normalized: dict[str, Any]) -> None:
+        if not self.enabled or self._conn is None:
+            return
+        try:
+            payload = json.dumps(normalized, separators=(",", ":"), default=str)
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO optimizer_snapshots(ts, optimizer, reachable, normalized) VALUES (?, ?, ?, ?)",
+                    (time.time(), optimizer[:80], int(bool(reachable)), payload),
+                )
+        except Exception as exc:  # noqa: BLE001
+            log(f"optimizer snapshot insert failed: {exc}")
+
     def backfill_completed(self) -> bool:
         if not self.enabled or self._conn is None:
             return True
@@ -671,6 +694,7 @@ class MetricsStore:
             )
             cur = self._conn.execute("DELETE FROM requests WHERE ts < ?", (cutoff_ts,))
             self._conn.execute("DELETE FROM service_events WHERE ts < ?", (cutoff_ts,))
+            self._conn.execute("DELETE FROM optimizer_snapshots WHERE ts < ?", (cutoff_ts,))
             return cur.rowcount or 0
 
     def checkpoint(self) -> None:
@@ -988,8 +1012,34 @@ def _health_snapshot(cfg: dict[str, str]) -> dict[str, str]:
         return dict(cached) if cached else {"gateway": "ok"}
 
 
+_OPTIMIZER_SNAPSHOT_INTERVAL_SECONDS = 60.0
+_LAST_OPTIMIZER_SNAPSHOT_TS = 0.0
+_LAST_HEALTH_SNAPSHOT: dict[str, str] = {}
+
+
+def _record_optimizer_snapshots(cfg: dict[str, str], health: dict[str, str]) -> None:
+    """Store normalized live counters on a bounded cadence, independent of UI tabs."""
+    global _LAST_OPTIMIZER_SNAPSHOT_TS
+    if not METRICS.enabled or time.time() - _LAST_OPTIMIZER_SNAPSHOT_TS < _OPTIMIZER_SNAPSHOT_INTERVAL_SECONDS:
+        return
+    _LAST_OPTIMIZER_SNAPSHOT_TS = time.time()
+    active = set(_chain_from_config(cfg))
+    fetchers = {"headroom": _api_tool_headroom, "pxpipe": _api_tool_pxpipe, "squeezr": _api_tool_squeezr}
+    for name in active:
+        fetch = fetchers.get(name)
+        if fetch is None:
+            continue
+        try:
+            result = fetch()
+            METRICS.record_optimizer_snapshot(name, bool(result.get("reachable")), dict(result.get("normalized") or {}))
+        except Exception as exc:  # noqa: BLE001
+            log(f"optimizer snapshot failed for {name}: {exc}")
+
+
 def _health_refresher_loop() -> None:
+    global _LAST_HEALTH_SNAPSHOT
     while True:
+        cfg: dict[str, str] = {}
         try:
             cfg = _load_config_values()
             snapshot = _health_map_uncached(cfg)
@@ -998,6 +1048,13 @@ def _health_refresher_loop() -> None:
         with _HEALTH_LOCK:
             _HEALTH_CACHE["value"] = snapshot
             _HEALTH_CACHE["ts"] = time.time()
+        if METRICS.enabled:
+            for service, state in snapshot.items():
+                previous = _LAST_HEALTH_SNAPSHOT.get(service)
+                if previous is not None and previous != state:
+                    METRICS.record_service_event(service, "health_changed", f"{previous}->{state}")
+            _LAST_HEALTH_SNAPSHOT = dict(snapshot)
+            _record_optimizer_snapshots(cfg, snapshot)
         time.sleep(max(1.0, HEALTH_INTERVAL_SECONDS))
 
 
@@ -1792,6 +1849,26 @@ def _api_metrics_operations(query: dict[str, list[str]]) -> dict[str, Any]:
     }
 
 
+def _api_metrics_optimizer_snapshots(query: dict[str, list[str]]) -> dict[str, Any]:
+    window = (query.get("window", ["24h"])[0] or "24h").lower()
+    optimizer = (query.get("optimizer", [""])[0] or "").strip()
+    since = time.time() - _window_seconds(window)
+    if not METRICS.enabled:
+        return {"window": window, "durable": False, "snapshots": []}
+    sql = "SELECT ts, optimizer, reachable, normalized FROM optimizer_snapshots WHERE ts >= ?"
+    params: tuple[Any, ...] = (since,)
+    if optimizer:
+        sql += " AND optimizer = ?"
+        params = (since, optimizer)
+    rows = METRICS.query(sql + " ORDER BY ts ASC LIMIT 10000", params)
+    for row in rows:
+        try:
+            row["normalized"] = json.loads(row.get("normalized") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            row["normalized"] = {}
+    return {"window": window, "durable": True, "snapshots": rows}
+
+
 def _api_metrics_timeseries(query: dict[str, list[str]]) -> dict[str, Any]:
     window = (query.get("window", ["1h"])[0] or "1h").lower()
     bucket = (query.get("bucket", ["1m"])[0] or "1m").lower()
@@ -2514,6 +2591,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return True
         if path == "/api/metrics/operations":
             self._respond_json(200, _api_metrics_operations(query))
+            return True
+        if path == "/api/metrics/optimizer-snapshots":
+            self._respond_json(200, _api_metrics_optimizer_snapshots(query))
             return True
         if path == "/api/metrics/timeseries":
             self._respond_json(200, _api_metrics_timeseries(query))

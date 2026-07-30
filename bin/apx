@@ -1115,12 +1115,19 @@ advisor_rules() {
 
 config_advise_usage() {
   cat <<'EOF'
-usage: apx config advise [--json] [--show-all]
-       apx config advise --dismiss ADVISORY_ID
+usage: apx config <advise|chain|target|port|claude|mode> ...
 
-Reviews local configuration for token observability, safe capability upgrades,
-security posture, ownership, and cached optimizer-version updates. It does not
-contact a registry, change configuration, or restart apx.
+  advise [--json] [--show-all]  Review safe local recommendations.
+  advise --dismiss ADVISORY_ID  Dismiss one versioned recommendation.
+  chain ...                     Configure optimizer routing order.
+  target ...                    Configure the upstream API endpoint.
+  port ...                      Configure local listener ports.
+  claude ...                    Configure the Claude client endpoint.
+  mode [preset]                Show or apply a routing preset.
+
+`advise` reviews local configuration for token observability, safe capability
+upgrades, security posture, ownership, and cached optimizer-version updates.
+It does not contact a registry, change configuration, or restart apx.
 
   --json                 Emit stable machine-readable advisory records.
   --show-all             Include advisories previously dismissed by this user.
@@ -1130,6 +1137,8 @@ Examples:
   apx config advise
   apx config advise --json
   apx config advise --dismiss metrics-disabled
+  apx config chain set headroom,pxpipe
+  apx config port set pxpipe 47822
 EOF
 }
 
@@ -1182,6 +1191,11 @@ config_advise() {
 config_command() {
   case "${1:-advise}" in
     advise) shift || true; config_advise "$@" ;;
+    chain) shift || true; chain_cli "$@" ;;
+    target) shift || true; target_cli "$@" ;;
+    port) shift || true; port_cli "$@" ;;
+    claude) shift || true; claude_command "$@" ;;
+    mode) shift || true; set_mode "${@:-current}" ;;
     help|-h|--help|"") config_advise_usage ;;
     *) echo "unknown config action: $1" >&2; config_advise_usage >&2; return 2 ;;
   esac
@@ -1205,13 +1219,20 @@ optimizer_command() {
         *) echo "unknown optimizer: $name" >&2; return 2 ;;
       esac
       ;;
+    pxpipe) shift || true; pxpipe_command "$@" ;;
+    headroom) shift || true; headroom_command "$@" ;;
+    squeezr) shift || true; squeezr_command "$@" ;;
     help|-h|--help)
       cat <<'EOF'
-usage: apx optimizer [sources|latest] | reconcile <optimizer> <version> --dry-run
+usage: apx optimizer [sources|latest] | <pxpipe|headroom|squeezr> ...
+       apx optimizer reconcile <optimizer> <version> --dry-run
 
   sources                         Show package source, configured command,
                                   ownership, and local version information.
   latest                          Query PyPI/npm for latest versions; read-only.
+  pxpipe models <sub>             Get/set pxpipe model capability settings.
+  headroom settings <sub>         Get/set safe Headroom feature settings.
+  squeezr bypass <sub>            Get/set Squeezr compression bypass state.
   reconcile headroom VERSION
       --dry-run                   Print the exact managed Headroom change
                                   without installing, upgrading, or restarting.
@@ -1226,6 +1247,8 @@ Ownership is deliberately conservative:
 
 Examples:
   apx optimizer
+  apx optimizer pxpipe models get
+  apx optimizer headroom settings set tool-search on
   apx optimizer reconcile headroom 1.2.3 --dry-run
 
 pxpipe and Squeezr reconciliation is not enabled yet. This command never
@@ -3828,7 +3851,7 @@ _apx_completions() {
   fi
   case "\${words[1]}" in
     mode)     COMPREPLY=( \$(compgen -W "$modes" -- "\$cur") ) ;;
-    config)   COMPREPLY=( \$(compgen -W "advise --json --show-all --dismiss" -- "\$cur") ) ;;
+    config)   COMPREPLY=( \$(compgen -W "advise chain target port claude mode --json --show-all --dismiss" -- "\$cur") ) ;;
     chain)    COMPREPLY=( \$(compgen -W "$chain_subs $services" -- "\$cur") ) ;;
     target)   COMPREPLY=( \$(compgen -W "$target_subs --no-restart" -- "\$cur") ) ;;
     port)     COMPREPLY=( \$(compgen -W "$port_subs $port_services --no-restart --no-claude-sync" -- "\$cur") ) ;;
@@ -3875,6 +3898,7 @@ ZSH
     chain) _describe -t chain 'apx chain' chain_subs && _describe -t services 'services' services ;;
     target) _describe -t target 'apx target' target_subs ;;
     port) _describe -t port 'apx port' port_subs && _describe -t port-services 'services' port_services ;;
+    config) _values 'configuration action' 'advise' 'chain' 'target' 'port' 'claude' 'mode' '--json' '--show-all' '--dismiss[advisory ID]' ;;
     optimizer) _values 'optimizer action' 'sources' 'status' 'latest' 'reconcile' 'headroom' 'pxpipe' 'squeezr' '--dry-run' ;;
     headroom) _values 'headroom action' 'settings' 'get' 'set' 'tool-search' 'code-aware' 'code-graph' 'on' 'off' '--no-restart' ;;
     pxpipe) _values 'pxpipe action' 'models' 'get' 'set' 'off' '--no-restart' ;;
@@ -3902,7 +3926,7 @@ FISH
       for m in $modes; do
         printf 'complete -c apx -n "__fish_seen_subcommand_from mode" -a "%s"\n' "$m"
       done
-      for c in advise --json --show-all --dismiss; do
+      for c in advise chain target port claude mode --json --show-all --dismiss; do
         printf 'complete -c apx -n "__fish_seen_subcommand_from config" -a "%s"\n' "$c"
       done
       for c in $chain_subs; do
@@ -4070,16 +4094,16 @@ Commands:
   disable              Stop stack/gateway and remove ANTHROPIC_BASE_URL
   restart [--takeover] Stop then start
   status               Show current health and pids
-  config advise        Review safe configuration recommendations (read-only)
-  optimizer            Show source/ownership/update status; plan managed changes
-  mode [preset]        Show/set mode preset and sync Claude settings
-  chain <sub>          Get/set the routing chain (get|set|clear|ls|preset)
-  target <sub>         Get/set upstream API endpoint (get|set|reset)
-  port <sub>           Get/set local service ports
-  headroom settings    Get/set safe persistent Headroom features
-  pxpipe models <sub>  Get/set persistent pxpipe image-model allowlist
-  squeezr bypass <sub> Get/set Squeezr compression bypass state
-  claude <sub>         Configure Claude client URL (local|docker-host|custom)
+  config <sub>         Configure routing, ports, Claude, mode, or get advice
+  optimizer <sub>      Inspect optimizers, check versions, or change safe settings
+  mode [preset]        Alias: apx config mode [preset]
+  chain <sub>          Alias: apx config chain <sub>
+  target <sub>         Alias: apx config target <sub>
+  port <sub>           Alias: apx config port <sub>
+  headroom settings    Alias: apx optimizer headroom settings
+  pxpipe models <sub>  Alias: apx optimizer pxpipe models <sub>
+  squeezr bypass <sub> Alias: apx optimizer squeezr bypass <sub>
+  claude <sub>         Alias: apx config claude <sub>
   doctor               Show status plus dependency diagnostics
   install              Install/start the selected service backend
   uninstall [--purge]  Stop and remove service; --purge removes apx-owned files

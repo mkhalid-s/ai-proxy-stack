@@ -657,6 +657,26 @@ contacts a registry, changes `config.env`, or restarts a service. Dismissals
 are stored by advisory ID and guidance version under apx state; use `--show-all`
 to review them later.
 
+### Command layout
+
+The grouped commands are the recommended paths for new users. The earlier
+top-level commands remain supported aliases, so existing scripts do not need
+to change.
+
+```bash
+# Configuration and client routing
+apx config chain set headroom,pxpipe
+apx config target set https://api.anthropic.com
+apx config port set pxpipe 47822
+apx config claude configure
+
+# Optimizer-specific controls
+apx optimizer pxpipe models get
+apx optimizer headroom settings set tool-search on
+apx optimizer squeezr bypass get
+apx optimizer latest
+```
+
 ## URLs
 
 ```text

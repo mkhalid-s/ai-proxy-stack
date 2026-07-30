@@ -141,6 +141,18 @@ if "$APX" headroom settings set tls-strict off --no-restart >/dev/null 2>&1; the
   exit 1
 fi
 "$APX" squeezr bypass --help >/dev/null
+if [[ "$("$APX" optimizer pxpipe models get)" != "PXPIPE_MODELS=off" ]]; then
+  echo "ERROR: grouped optimizer pxpipe command did not preserve the legacy behavior" >&2
+  exit 1
+fi
+if ! "$APX" optimizer headroom settings get | grep -q '^tool-search=false$'; then
+  echo "ERROR: grouped optimizer headroom command did not preserve the legacy behavior" >&2
+  exit 1
+fi
+if ! "$APX" config port get gateway | grep -q "^GATEWAY_PORT=$PORT$"; then
+  echo "ERROR: grouped config port command did not preserve the legacy behavior" >&2
+  exit 1
+fi
 
 # The configuration advisor must stay local/read-only, provide a stable JSON
 # shape, and let a user explicitly dismiss an intentional recommendation.

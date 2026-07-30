@@ -221,11 +221,13 @@ Existing runtime config is preserved on reinstall. The installer backs it up and
 
 ## Dashboard
 
-Open [http://127.0.0.1:8787/](http://127.0.0.1:8787/) after installing to see a single pane that aggregates every component. The dashboard is zero-build, self-contained, and served by `apx-gateway`.
+Open [http://127.0.0.1:8787/](http://127.0.0.1:8787/) after installing to see a single pane that aggregates every component. The dashboard is served by `apx-gateway`; its primary overview is a bundled Svelte/uPlot module, while specialized controls retain a safe legacy fallback. Assets are revalidated after an apx upgrade so the overview does not remain stale.
 
 It includes:
 
 - gateway KPIs: request volume, status buckets, p95 latency, first-byte latency, token totals, cache token totals, estimated cost, and tool-call counts
+- an at-a-glance overview with latency and request charts, persisted optimizer reachability, and verified/estimated/unavailable savings coverage
+- a **Needs Attention** feed for unavailable measurements, optimizer outages, health degradations, and observational chain regressions; it recommends investigation and never claims causal proof
 - current mode, chain diagram, apx version, and capture-level badge
 - a comparative tool view that normalizes Headroom, pxpipe, and Squeezr savings/cache/request data side-by-side
 - session rollups and drill-in details keyed by `X-Apx-Session-Id`
@@ -248,6 +250,8 @@ GET /api/metrics/efficiency/timeseries?window=1h  measured and estimated savings
 GET /api/metrics/chains?window=24h      observed token/cost/latency/error comparison by chain
 GET /api/metrics/model-quality?window=24h  direct-versus-optimized quality comparison per model
 GET /api/metrics/operations?limit=10   metrics-store freshness, retention, and gateway lifecycle events
+GET /api/metrics/attention?window=24h  conservative actionable dashboard signals
+GET /api/metrics/optimizer-snapshots?window=24h  persisted optimizer health/counter snapshots
 GET /api/metrics/timeseries?window=1h   bucketed latency/request/token series
 GET /api/metrics/sessions?window=24h    grouped sessions
 GET /api/metrics/session/<id>           per-request session detail
@@ -279,6 +283,16 @@ explicitly provides both before/after counts; it never infers savings from
 aggregate traffic. Malformed or incomplete claims are retained as unavailable.
 
 Disable the dashboard entirely by setting `APX_DASHBOARD_ENABLED=0` in `~/.config/apx/config.env`. The gateway keeps proxying normally either way.
+
+### Reading savings and restart-safe data
+
+For a first check, choose a time window, open **Needs Attention**, then inspect
+**Token Consumption & Verified Savings** and **Optimizer Measurement Coverage**.
+Only `measured` savings have explicit per-request before/after evidence;
+`estimated` values remain separate, and `unavailable` means apx has no basis
+to claim savings. Request history, sessions, optimizer attempts, health
+snapshots, and dashboard selections are stored locally in SQLite/JSONL and
+survive gateway restarts, subject to configured retention.
 
 When exposing the Gateway beyond loopback, LeanRelay keeps Headroom, pxpipe,
 and Squeezr on `APX_INTERNAL_HOST=127.0.0.1`. Native third-party dashboards

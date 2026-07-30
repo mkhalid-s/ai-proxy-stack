@@ -569,6 +569,18 @@ PXPIPE_MODELS="claude-fable-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,cl
 
 Set `PXPIPE_MODELS=off` to disable image conversion while keeping pxpipe as a pass-through logging/dashboard proxy. pxpipe does not support a wildcard; add future model bases explicitly.
 
+Use the CLI to make a persistent change and restart every supported service backend:
+
+```bash
+apx pxpipe models get
+apx pxpipe models set claude-fable-5,gpt-5.6
+apx pxpipe models set off
+```
+
+`PXPIPE_MODELS=... apx restart` is not a reliable override for launchd or
+systemd because those supervisors deliberately start apx with a controlled
+environment. `apx pxpipe models set` updates the active `config.env` instead.
+
 ## Runtime Layout
 
 Source files live in this repository. Services use home-directory runtime

@@ -367,7 +367,7 @@ start_pxpipe() {
       return 1
     fi
   fi
-  log "starting pxpipe on $APX_INTERNAL_HOST:$PXPIPE_PORT"
+  log "starting pxpipe on $APX_INTERNAL_HOST:$PXPIPE_PORT with models=$PXPIPE_MODELS"
   (
     cd "$WORKDIR"
     export_ca_bundle
@@ -2135,6 +2135,74 @@ target_cli() {
   esac
 }
 
+pxpipe_models_usage() {
+  cat <<EOF
+usage: apx pxpipe models <get|set> [models|off] [--no-restart]
+
+  get                         Show the persistent pxpipe model allowlist.
+  set model-a,model-b          Set exact model IDs that pxpipe may image.
+  set off                      Disable image conversion while retaining pxpipe.
+
+The value is written to $CONFIG_FILE, so it applies to nohup, launchd, and
+systemd after restart. Wildcards are not supported by pxpipe.
+EOF
+}
+
+pxpipe_models_valid() {
+  local value="$1" model
+  [[ "$value" == "off" ]] && return 0
+  [[ -n "$value" ]] || return 1
+  IFS=',' read -r -a models <<< "$value"
+  for model in "${models[@]}"; do
+    [[ "$model" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]*$ ]] || return 1
+  done
+}
+
+pxpipe_command() {
+  local sub="${1:-}" action value restart="1"
+  case "$sub" in
+    models)
+      shift || true
+      action="${1:-get}"
+      shift || true
+      load_config
+      case "$action" in
+        get|show)
+          [[ $# -eq 0 ]] || { pxpipe_models_usage >&2; return 2; }
+          echo "PXPIPE_MODELS=$PXPIPE_MODELS"
+          ;;
+        set)
+          value="${1:-}"
+          shift || true
+          while [[ $# -gt 0 ]]; do
+            case "$1" in
+              --no-restart) restart="0" ;;
+              *) pxpipe_models_usage >&2; return 2 ;;
+            esac
+            shift
+          done
+          if ! pxpipe_models_valid "$value"; then
+            echo "error: PXPIPE_MODELS must be 'off' or a comma-separated list of exact model IDs" >&2
+            return 2
+          fi
+          set_config_var PXPIPE_MODELS "$(config_quote "$value")"
+          echo "PXPIPE_MODELS updated: $value"
+          if [[ "$restart" == "1" ]]; then
+            restart_service
+            echo "apx restarted; pxpipe now receives the configured model allowlist."
+          else
+            echo "not restarted; run: apx restart"
+          fi
+          ;;
+        help|-h|--help|"") pxpipe_models_usage ;;
+        *) pxpipe_models_usage >&2; return 2 ;;
+      esac
+      ;;
+    help|-h|--help|"") pxpipe_models_usage ;;
+    *) pxpipe_models_usage >&2; return 2 ;;
+  esac
+}
+
 status() {
   load_config
   local spid gpid ppid hpid sqpid gport pport hport sqport sstate ghealth phealth hhealth sqhealth mode installed latest
@@ -3271,7 +3339,7 @@ EOF
 
 print_completions() {
   local shell="${1:-}"
-  local cmds="start stop disable restart run status mode chain target port claude doctor install uninstall supervisor logs support-bundle debug urls dashboard version check-updates update versions use rollback cleanup completions help"
+  local cmds="start stop disable restart run status mode chain target port pxpipe claude doctor install uninstall supervisor logs support-bundle debug urls dashboard version check-updates update versions use rollback cleanup completions help"
   local modes="current headroom-pxpipe pxpipe-headroom headroom squeezr headroom-squeezr pxpipe direct off full"
   local chain_subs="get set clear ls preset help"
   local target_subs="get set reset help"
@@ -3301,6 +3369,7 @@ _apx_completions() {
     chain)    COMPREPLY=( \$(compgen -W "$chain_subs $services" -- "\$cur") ) ;;
     target)   COMPREPLY=( \$(compgen -W "$target_subs --no-restart" -- "\$cur") ) ;;
     port)     COMPREPLY=( \$(compgen -W "$port_subs $port_services --no-restart --no-claude-sync" -- "\$cur") ) ;;
+    pxpipe)   COMPREPLY=( \$(compgen -W "models get set off --no-restart" -- "\$cur") ) ;;
     claude)   COMPREPLY=( \$(compgen -W "$claude_subs local docker-host" -- "\$cur") ) ;;
     logs)     COMPREPLY=( \$(compgen -W "$log_targets --tail --no-follow" -- "\$cur") ) ;;
     debug)    COMPREPLY=( \$(compgen -W "level get set info debug trace --no-restart" -- "\$cur") ) ;;
@@ -3340,6 +3409,7 @@ ZSH
     chain) _describe -t chain 'apx chain' chain_subs && _describe -t services 'services' services ;;
     target) _describe -t target 'apx target' target_subs ;;
     port) _describe -t port 'apx port' port_subs && _describe -t port-services 'services' port_services ;;
+    pxpipe) _values 'pxpipe action' 'models' 'get' 'set' 'off' '--no-restart' ;;
     claude) _describe -t claude 'apx claude' claude_subs ;;
     logs) _describe -t logs 'apx log target' log_targets ;;
     debug) _values 'debug' 'level' 'get' 'set' 'info' 'debug' 'trace' '--no-restart' ;;
@@ -3384,6 +3454,8 @@ FISH
       cat <<'FISH'
 complete -c apx -n "__fish_seen_subcommand_from completions" -a "bash zsh fish install uninstall"
 complete -c apx -n "__fish_seen_subcommand_from debug" -a "level get set info debug trace --no-restart"
+complete -c apx -n "__fish_seen_subcommand_from pxpipe" -a "models get set off"
+complete -c apx -n "__fish_seen_subcommand_from pxpipe" -l no-restart
 complete -c apx -n "__fish_seen_subcommand_from target" -l no-restart
 complete -c apx -n "__fish_seen_subcommand_from port" -l no-restart -l no-claude-sync
 complete -c apx -n "__fish_seen_subcommand_from uninstall" -l purge -l dry-run -l yes
@@ -3526,6 +3598,7 @@ Commands:
   chain <sub>          Get/set the routing chain (get|set|clear|ls|preset)
   target <sub>         Get/set upstream API endpoint (get|set|reset)
   port <sub>           Get/set local service ports
+  pxpipe models <sub>  Get/set persistent pxpipe image-model allowlist
   claude <sub>         Configure Claude client URL (local|docker-host|custom)
   doctor               Show status plus dependency diagnostics
   install              Install/start the selected service backend
@@ -3593,6 +3666,7 @@ case "$cmd" in
   chain) chain_cli "$@" ;;
   target) target_cli "$@" ;;
   port) port_cli "$@" ;;
+  pxpipe) pxpipe_command "$@" ;;
   claude) claude_command "$@" ;;
   doctor) doctor ;;
   install) install_service ;;

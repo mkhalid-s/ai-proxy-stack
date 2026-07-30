@@ -116,6 +116,21 @@ wait_livez() {
 "$APX" start >/dev/null
 wait_livez
 
+# pxpipe model changes must persist to the managed config rather than relying
+# on a one-shot shell environment that launchd/systemd would discard.
+"$APX" pxpipe models set claude-fable-5,gpt-5.6 --no-restart >/dev/null
+grep -q '^PXPIPE_MODELS="claude-fable-5,gpt-5.6"$' "$APX_CONFIG"
+if [[ "$("$APX" pxpipe models get)" != "PXPIPE_MODELS=claude-fable-5,gpt-5.6" ]]; then
+  echo "ERROR: pxpipe model allowlist did not persist" >&2
+  exit 1
+fi
+"$APX" pxpipe models set off --no-restart >/dev/null
+grep -q '^PXPIPE_MODELS="off"$' "$APX_CONFIG"
+if "$APX" pxpipe models set 'model,*' --no-restart >/dev/null 2>&1; then
+  echo "ERROR: pxpipe models accepted a wildcard" >&2
+  exit 1
+fi
+
 second="$("$APX" start 2>&1)"
 if [[ "$second" != *"already running"* ]]; then
   echo "ERROR: Expected 'already running' message, got: $second" >&2

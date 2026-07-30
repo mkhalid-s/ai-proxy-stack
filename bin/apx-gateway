@@ -2626,7 +2626,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 200,
                 body,
                 content_type=content_type,
-                extra_headers={"cache-control": "public, max-age=3600", "x-content-type-options": "nosniff"},
+                # Build assets deliberately keep stable names so an installed
+                # dashboard can be replaced atomically. Require revalidation
+                # to avoid serving an older UI after an apx upgrade/restart.
+                extra_headers={"cache-control": "no-cache", "x-content-type-options": "nosniff"},
             )
             return True
 

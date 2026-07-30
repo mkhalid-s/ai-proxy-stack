@@ -44,8 +44,9 @@ curl -fsS -c "$TMP/cookies" "http://127.0.0.1:$PORT/?token=dashboard-test-token"
 curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/" -o "$TMP/dashboard.html"
 grep -q 'id="svelte-overview"' "$TMP/dashboard.html"
 grep -q 'src="/assets/app.js"' "$TMP/dashboard.html"
-curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/assets/app.js" -o "$TMP/app.js"
+curl -fsS -D "$TMP/asset-headers" -b "$TMP/cookies" "http://127.0.0.1:$PORT/assets/app.js" -o "$TMP/app.js"
 grep -q 'svelte-overview' "$TMP/app.js"
+grep -qi '^cache-control: no-cache' "$TMP/asset-headers"
 curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/attention?window=1h" -o "$TMP/attention.json"
 python3 - "$TMP/attention.json" <<'PY'
 import json

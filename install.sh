@@ -493,6 +493,17 @@ sync_runtime() {
   fi
 
   sync_config
+
+  # A fresh config uses npx by default. If npx is unavailable, switch only
+  # that untouched default to npm exec; never rewrite a user-provided command.
+  if [[ "$CHECK_ONLY" != "1" && -f "$RUNTIME_CONFIG" ]] && ! have npx \
+    && grep -qx 'PXPIPE_CMD="npx -y pxpipe-proxy@0.8.0"' "$RUNTIME_CONFIG"; then
+    local tmp_cfg
+    tmp_cfg="$(mktemp)"
+    sed 's|^PXPIPE_CMD="npx -y pxpipe-proxy@0.8.0"$|PXPIPE_CMD="npm exec --yes pxpipe-proxy@0.8.0"|' "$RUNTIME_CONFIG" > "$tmp_cfg"
+    mv "$tmp_cfg" "$RUNTIME_CONFIG"
+    log "npx is unavailable; selected npm exec for the default pxpipe command"
+  fi
 }
 
 ensure_local_bin_on_shell_path() {

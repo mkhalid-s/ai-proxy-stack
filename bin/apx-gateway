@@ -2568,6 +2568,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return False
         return origin_host == request_host
 
+    def _native_dashboard_host_allowed(self) -> bool:
+        """Keep third-party dashboard code on explicitly local browser origins."""
+        try:
+            hostname = (urlsplit(f"//{self.headers.get('host', '')}").hostname or "").lower()
+        except ValueError:
+            return False
+        return hostname in {"127.0.0.1", "::1", "localhost", "host.docker.internal"}
+
     def _authorized_for_dashboard(self, allow_query: bool = True) -> bool:
         if not DASHBOARD_TOKEN:
             return True
@@ -2628,6 +2636,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             path in {"/", "/dashboard", "/metrics"}
             or path.startswith("/api/")
             or path.startswith("/assets/")
+            or path.startswith("/proxy/headroom")
             or path.startswith("/proxy/pxpipe")
             or path.startswith("/proxy/squeezr")
         )
@@ -2638,13 +2647,33 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._respond_json(403, {"error": "cross_site_dashboard_request_forbidden"})
             return True
 
+        if path.startswith("/proxy/headroom/") or path == "/proxy/headroom":
+            if not self._native_dashboard_host_allowed():
+                self._respond_json(403, {"error": "native_dashboard_local_only"})
+                return True
+            if not self._authorized_for_dashboard(allow_query=False):
+                self._require_token()
+                return True
+            self._passthrough(
+                HEADROOM_URL,
+                path[len("/proxy/headroom"):] or "/dashboard",
+                passthrough_query,
+                prefix="/proxy/headroom",
+            )
+            return True
         if path.startswith("/proxy/pxpipe/") or path == "/proxy/pxpipe":
+            if not self._native_dashboard_host_allowed():
+                self._respond_json(403, {"error": "native_dashboard_local_only"})
+                return True
             if not self._authorized_for_dashboard(allow_query=False):
                 self._require_token()
                 return True
             self._passthrough(PXPIPE_URL, path[len("/proxy/pxpipe"):] or "/", passthrough_query, prefix="/proxy/pxpipe")
             return True
         if path.startswith("/proxy/squeezr/") or path == "/proxy/squeezr":
+            if not self._native_dashboard_host_allowed():
+                self._respond_json(403, {"error": "native_dashboard_local_only"})
+                return True
             if not self._authorized_for_dashboard(allow_query=False):
                 self._require_token()
                 return True

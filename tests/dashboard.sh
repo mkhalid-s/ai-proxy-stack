@@ -58,11 +58,18 @@ curl -fsS -c "$TMP/cookies" "http://127.0.0.1:$PORT/?token=dashboard-test-token"
 curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/" -o "$TMP/dashboard.html"
 grep -q 'id="svelte-overview"' "$TMP/dashboard.html"
 grep -q 'src="/assets/app.js"' "$TMP/dashboard.html"
+grep -q 'href="/assets/app.css"' "$TMP/dashboard.html"
 curl -fsS -D "$TMP/asset-headers" -b "$TMP/cookies" "http://127.0.0.1:$PORT/assets/app.js" -o "$TMP/app.js"
+curl -fsS -D "$TMP/css-headers" -b "$TMP/cookies" "http://127.0.0.1:$PORT/assets/app.css" -o "$TMP/app.css"
 grep -q 'svelte-overview' "$TMP/app.js"
 grep -q 'Verified tokens saved' "$TMP/app.js"
 grep -q 'Token flow' "$TMP/app.js"
+grep -q '/proxy/headroom' "$TMP/app.js"
+grep -q '/proxy/pxpipe/' "$TMP/app.js"
+grep -q '/proxy/squeezr/' "$TMP/app.js"
+grep -q '.overview .charts' "$TMP/app.css"
 grep -qi '^cache-control: no-cache' "$TMP/asset-headers"
+grep -qi '^cache-control: no-cache' "$TMP/css-headers"
 
 # Seed only durable, explicit measurements. The overview must never need to
 # infer token savings from aggregate traffic to show its central cards.

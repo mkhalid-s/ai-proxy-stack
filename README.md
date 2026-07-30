@@ -275,11 +275,26 @@ Open [http://127.0.0.1:8787/](http://127.0.0.1:8787/) after installing for a foc
 
 It includes:
 
+- three focused views—**Overview**, **Optimizers**, and **Activity**—instead of one long metrics wall
 - a **Needs Attention** feed with every active signal available through a compact expand control
 - tokens processed, explicit verified savings, measurement coverage, request status, and p95 latency
+- cache reuse, estimated spend, active models, tool calls, and streamed-request context
 - separate token-flow and verified-versus-estimated savings trends
-- persisted optimizer reachability and per-optimizer measurement confidence
+- persisted optimizer reachability, native optimizer-reported savings, and per-optimizer measurement confidence
+- direct links from optimizer health to the native Headroom, pxpipe, and Squeezr dashboards
+- local SQLite history status, top models, and recent session rollups
 - a remembered browser time window without storing dashboard preferences in the metrics database
+
+The gateway is also the dashboard web server: it serves the compiled frontend
+from `/assets/*`, protects the HTML and APIs with the same dashboard
+authentication, and keeps every request same-origin. No separate Node frontend
+server is needed at runtime.
+
+On local dashboard hosts, the optimizer links use authenticated same-origin gateway routes:
+`/proxy/headroom`, `/proxy/pxpipe/`, and `/proxy/squeezr/`. They open the
+optimizer's own specialist dashboard in a new tab; the LeanRelay page remains
+the concise cross-optimizer overview. The routes and links are disabled when
+the dashboard is reached through a non-local hostname.
 
 JSON APIs for scripting:
 
@@ -333,6 +348,11 @@ Disable the dashboard entirely by setting `APX_DASHBOARD_ENABLED=0` in `~/.confi
 
 For a first check, choose a time window, open **Needs Attention**, then inspect
 **Tokens processed**, **Verified tokens saved**, and **Savings coverage**.
+Every token total is displayed with an explicit `tokens` unit. **Tokens
+processed** is input plus output tokens observed by the gateway in the selected
+window; it is not a request count and compact suffixes are not used. **Verified
+tokens saved** is the number of input tokens removed by optimizers where
+request-level before/after measurements agree.
 Only `measured` savings have explicit per-request before/after evidence;
 `estimated` values remain separate, and `unavailable` means apx has no basis
 to claim savings. Request history, sessions, optimizer attempts, and health

@@ -201,7 +201,7 @@ jobs:
               def log_message(self, *_args):
                   pass
 
-          def start_gateway(tmp, capture="metadata", ack="", token="", body_cap="", max_request_bytes="67108864", pxpipe_url=""):
+          def start_gateway(tmp, capture="metadata", ack="", token="", body_cap="", max_request_bytes="67108864", tool_url=""):
               os.makedirs(os.path.join(tmp, "state"), exist_ok=True)
               os.makedirs(os.path.join(tmp, "config"), exist_ok=True)
               cfg = os.path.join(tmp, "config", "config.env")
@@ -230,8 +230,9 @@ jobs:
                   "APX_DASHBOARD_ENABLED": "1",
                   "APX_DASHBOARD_TOKEN": token,
               })
-              if pxpipe_url:
-                  env["APX_PXPIPE_URL"] = pxpipe_url
+              if tool_url:
+                  env["APX_HEADROOM_URL"] = tool_url
+                  env["APX_PXPIPE_URL"] = tool_url
               if body_cap:
                   env["APX_CAPTURE_BODY_CAP"] = body_cap
               return subprocess.Popen(["python", "bin/apx-gateway"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -248,7 +249,7 @@ jobs:
           tool = ThreadingHTTPServer(("127.0.0.1", TOOL_PORT), ToolProxy)
           threading.Thread(target=tool.serve_forever, daemon=True).start()
           with tempfile.TemporaryDirectory() as tmp:
-              proc = start_gateway(tmp, token="secret-token", pxpipe_url=f"http://127.0.0.1:{TOOL_PORT}")
+              proc = start_gateway(tmp, token="secret-token", tool_url=f"http://127.0.0.1:{TOOL_PORT}")
               try:
                   time.sleep(1)
                   try:
@@ -297,6 +298,21 @@ jobs:
                       assert "/proxy/pxpipe/api/stats.json" in html
                   assert ToolProxy.last_method == "POST"
                   assert ToolProxy.last_path == "/api/toggle?x=1", ToolProxy.last_path
+                  with opener.open(f"http://127.0.0.1:{GATEWAY_PORT}/proxy/headroom", timeout=5) as r:
+                      html = r.read().decode("utf-8")
+                      assert "/proxy/headroom/api/stats.json" in html
+                  assert ToolProxy.last_method == "GET"
+                  assert ToolProxy.last_path == "/dashboard", ToolProxy.last_path
+                  remote_native = urllib.request.Request(
+                      f"http://127.0.0.1:{GATEWAY_PORT}/proxy/headroom",
+                      headers={"Host": "dashboard.example", "Authorization": "Bearer secret-token"},
+                  )
+                  try:
+                      urllib.request.urlopen(remote_native, timeout=5)
+                      raise AssertionError("native dashboard unexpectedly available on a remote host")
+                  except urllib.error.HTTPError as e:
+                      assert e.code == 403, e
+                      assert json.loads(e.read())["error"] == "native_dashboard_local_only"
               finally:
                   proc.terminate()
                   try:
@@ -530,6 +546,14 @@ jobs:
         run: |
           npx playwright install --with-deps chromium --only-shell
           npm run test:browser
+
+      - name: Upload dashboard render artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-dashboard-renders
+          path: dashboard/test-results/**/dashboard-*.png
+          if-no-files-found: warn
 
   # ── 2) Pack apx.sh on both Linux and macOS to catch tool differences ─────
   pack:

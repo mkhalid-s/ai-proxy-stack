@@ -376,7 +376,7 @@ jobs:
                       assert 'id="pxpipe-native-frame"' in html
                       assert 'id="squeezr-native-frame"' in html
                       assert 'iframe src="/proxy/' not in html
-                      assert 'new EventSource("/api/events/stream?window=1h")' in html
+                      assert 'new EventSource(`/api/events/stream?window=${dashboardWindow}`)' in html
 
                   payload = {"model": "claude-sonnet-5", "messages": [{"role": "user", "content": "hello"}]}
                   req = urllib.request.Request(

@@ -35,6 +35,7 @@ CURRENT_LINK="$SHARE_DIR/current"
 INSTALL_MODE_FILE="$CONFIG_DIR/install.mode"
 INSTALL_MANIFEST_FILE="$STATE_DIR/install-manifest.env"
 OPTIMIZER_UPDATE_CACHE_FILE="$STATE_DIR/optimizer-latest.txt"
+ADVISOR_DISMISSALS_FILE="$STATE_DIR/config-advisor-dismissals.env"
 APX_RELEASE_REPO="${APX_RELEASE_REPO:-mkhalid-s/lean-relay}"
 RELEASE_ASSET_URL="${APX_RELEASE_ASSET_URL:-https://github.com/$APX_RELEASE_REPO/releases/latest/download/apx.sh}"
 RELEASE_ASSET_SHA_URL="${APX_RELEASE_ASSET_SHA_URL:-${RELEASE_ASSET_URL}.sha256}"
@@ -1024,6 +1025,166 @@ optimizer_update_summary() {
   if grep -q 'status=update available' "$OPTIMIZER_UPDATE_CACHE_FILE"; then
     echo "optimizer updates: update available (run: apx optimizer latest)"
   fi
+}
+
+# --- configuration advisor -------------------------------------------------
+#
+# The advisor deliberately evaluates local, deterministic facts only.  It does
+# not contact registries, alter config, or restart services.  Advisory IDs are
+# versioned so a meaningful change to a recommendation is shown again instead
+# of being hidden by an old dismissal.
+advisor_is_dismissed() {
+  local id="$1" version="$2"
+  [[ -f "$ADVISOR_DISMISSALS_FILE" ]] || return 1
+  grep -Fqx "$id=$version" "$ADVISOR_DISMISSALS_FILE" 2>/dev/null
+}
+
+advisor_dismiss() {
+  local id="$1"
+  case "$id" in
+    metrics-disabled|pxpipe-models-missing-opus-5|dashboard-exposed-without-token|insecure-upstream|headroom-external-ownership|optimizer-update-available) ;;
+    *) echo "unknown advisory: $id" >&2; return 2 ;;
+  esac
+  mkdir -p "$STATE_DIR"
+  if ! advisor_is_dismissed "$id" 1; then
+    printf '%s=1\n' "$id" >> "$ADVISOR_DISMISSALS_FILE"
+  fi
+  echo "dismissed advisory: $id (version 1)"
+  echo "run: apx config advise --show-all to review dismissed advisories"
+}
+
+advisor_json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '%s' "$value"
+}
+
+# Fields: ID, version, severity, category, title, impact, remediation.
+advisor_rules() {
+  load_config
+  local model_remediation
+
+  if [[ "$APX_METRICS_ENABLED" != "1" ]]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      metrics-disabled 1 recommended observability \
+      "Enable durable token metrics" \
+      "The dashboard cannot verify token consumption or savings while metrics are disabled." \
+      "Set APX_METRICS_ENABLED=1 in $CONFIG_FILE, then run: apx restart"
+  fi
+  if [[ "$PXPIPE_ENABLED" == "1" && "$PXPIPE_MODELS" != "off" && ",${PXPIPE_MODELS}," != *",claude-opus-5,"* ]]; then
+    model_remediation="$PXPIPE_MODELS,claude-opus-5"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      pxpipe-models-missing-opus-5 1 info capability \
+      "Add Claude Opus 5 to pxpipe's image-model allowlist" \
+      "pxpipe will pass Claude Opus 5 through without image conversion until it is explicitly allowed." \
+      "Run: apx pxpipe models set $model_remediation"
+  fi
+  if [[ "$BIND_HOST" != "127.0.0.1" && "$BIND_HOST" != "::1" && "$BIND_HOST" != "localhost" && -z "$APX_DASHBOARD_TOKEN" ]]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      dashboard-exposed-without-token 1 warning security \
+      "Protect an externally reachable dashboard" \
+      "The gateway is not bound to loopback and the dashboard has no access token." \
+      "Set a strong APX_DASHBOARD_TOKEN in $CONFIG_FILE, then run: apx restart"
+  fi
+  if [[ "$APX_TARGET_API_URL" =~ ^http:// ]] && [[ "$APX_TARGET_API_URL" != http://127.0.0.1* && "$APX_TARGET_API_URL" != http://localhost* && "$APX_TARGET_API_URL" != http://\[::1\]* ]]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      insecure-upstream 1 warning security \
+      "Use HTTPS for the upstream API" \
+      "Requests can be exposed or modified in transit to a non-local HTTP upstream." \
+      "Run: apx target set https://your-compatible-endpoint.example.com"
+  fi
+  if [[ "$(optimizer_ownership headroom)" == "external" ]]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      headroom-external-ownership 1 info ownership \
+      "Headroom is externally managed" \
+      "apx will preserve this installation and will not upgrade or remove it." \
+      "Review its version with: apx optimizer sources"
+  fi
+  if [[ -f "$OPTIMIZER_UPDATE_CACHE_FILE" ]] && grep -q 'status=update available' "$OPTIMIZER_UPDATE_CACHE_FILE"; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      optimizer-update-available 1 info versions \
+      "An optimizer update is available" \
+      "A newer optimizer version was found during the daily read-only update check." \
+      "Review versions and ownership with: apx optimizer latest"
+  fi
+}
+
+config_advise_usage() {
+  cat <<'EOF'
+usage: apx config advise [--json] [--show-all]
+       apx config advise --dismiss ADVISORY_ID
+
+Reviews local configuration for token observability, safe capability upgrades,
+security posture, ownership, and cached optimizer-version updates. It does not
+contact a registry, change configuration, or restart apx.
+
+  --json                 Emit stable machine-readable advisory records.
+  --show-all             Include advisories previously dismissed by this user.
+  --dismiss ID           Hide one advisory version until its guidance changes.
+
+Examples:
+  apx config advise
+  apx config advise --json
+  apx config advise --dismiss metrics-disabled
+EOF
+}
+
+config_advise() {
+  local json=0 show_all=0 dismiss_id="" arg
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    case "$arg" in
+      --json) json=1 ;;
+      --show-all) show_all=1 ;;
+      --dismiss) shift; dismiss_id="${1:-}"; [[ -n "$dismiss_id" ]] || { config_advise_usage >&2; return 2; } ;;
+      --dismiss=*) dismiss_id="${arg#--dismiss=}" ;;
+      -h|--help|help) config_advise_usage; return 0 ;;
+      *) config_advise_usage >&2; return 2 ;;
+    esac
+    shift
+  done
+  [[ -z "$dismiss_id" || "$json" == "0" ]] || { echo "--dismiss cannot be combined with --json" >&2; return 2; }
+  [[ -z "$dismiss_id" || "$show_all" == "0" ]] || { echo "--dismiss cannot be combined with --show-all" >&2; return 2; }
+  [[ -z "$dismiss_id" ]] || { advisor_dismiss "$dismiss_id"; return $?; }
+
+  local id version severity category title impact remediation dismissed emitted=0 first=1
+  if [[ "$json" == "1" ]]; then printf '[\n'; else echo "configuration advisor (local, read-only)"; fi
+  while IFS=$'\t' read -r id version severity category title impact remediation; do
+    [[ -n "$id" ]] || continue
+    dismissed=0
+    advisor_is_dismissed "$id" "$version" && dismissed=1
+    [[ "$show_all" == "1" || "$dismissed" == "0" ]] || continue
+    emitted=1
+    if [[ "$json" == "1" ]]; then
+      [[ "$first" == "1" ]] || printf ',\n'
+      first=0
+      printf '  {"id":"%s","version":%s,"severity":"%s","category":"%s","title":"%s","impact":"%s","remediation":"%s","dismissed":%s}' \
+        "$(advisor_json_escape "$id")" "$version" "$(advisor_json_escape "$severity")" "$(advisor_json_escape "$category")" \
+        "$(advisor_json_escape "$title")" "$(advisor_json_escape "$impact")" "$(advisor_json_escape "$remediation")" "$([[ "$dismissed" == "1" ]] && echo true || echo false)"
+    else
+      printf '\n[%s] %s — %s\n  Impact: %s\n  Next: %s\n' "$severity" "$category" "$title" "$impact" "$remediation"
+      [[ "$dismissed" == "0" ]] || echo "  Status: dismissed"
+    fi
+  done < <(advisor_rules)
+  if [[ "$json" == "1" ]]; then
+    printf '\n]\n'
+  elif [[ "$emitted" == "0" ]]; then
+    printf '\nNo active configuration advisories.\n'
+  else
+    printf '\nNo changes were made. Dismiss an intentional choice with: apx config advise --dismiss ADVISORY_ID\n'
+  fi
+}
+
+config_command() {
+  case "${1:-advise}" in
+    advise) shift || true; config_advise "$@" ;;
+    help|-h|--help|"") config_advise_usage ;;
+    *) echo "unknown config action: $1" >&2; config_advise_usage >&2; return 2 ;;
+  esac
 }
 
 optimizer_command() {
@@ -3640,7 +3801,7 @@ EOF
 
 print_completions() {
   local shell="${1:-}"
-  local cmds="start stop disable restart run status optimizer mode chain target port headroom pxpipe squeezr claude doctor install uninstall supervisor logs support-bundle debug urls dashboard version check-updates update versions use rollback cleanup completions help"
+  local cmds="start stop disable restart run status config optimizer mode chain target port headroom pxpipe squeezr claude doctor install uninstall supervisor logs support-bundle debug urls dashboard version check-updates update versions use rollback cleanup completions help"
   local modes="current headroom-pxpipe pxpipe-headroom headroom squeezr headroom-squeezr pxpipe direct off full"
   local chain_subs="get set clear ls preset help"
   local target_subs="get set reset help"
@@ -3667,6 +3828,7 @@ _apx_completions() {
   fi
   case "\${words[1]}" in
     mode)     COMPREPLY=( \$(compgen -W "$modes" -- "\$cur") ) ;;
+    config)   COMPREPLY=( \$(compgen -W "advise --json --show-all --dismiss" -- "\$cur") ) ;;
     chain)    COMPREPLY=( \$(compgen -W "$chain_subs $services" -- "\$cur") ) ;;
     target)   COMPREPLY=( \$(compgen -W "$target_subs --no-restart" -- "\$cur") ) ;;
     port)     COMPREPLY=( \$(compgen -W "$port_subs $port_services --no-restart --no-claude-sync" -- "\$cur") ) ;;
@@ -3709,6 +3871,7 @@ ZSH
   fi
   case "$words[2]" in
     mode) _describe -t modes 'apx mode' modes ;;
+    config) _values 'configuration action' 'advise' '--json' '--show-all' '--dismiss[advisory ID]' ;;
     chain) _describe -t chain 'apx chain' chain_subs && _describe -t services 'services' services ;;
     target) _describe -t target 'apx target' target_subs ;;
     port) _describe -t port 'apx port' port_subs && _describe -t port-services 'services' port_services ;;
@@ -3738,6 +3901,9 @@ FISH
       done
       for m in $modes; do
         printf 'complete -c apx -n "__fish_seen_subcommand_from mode" -a "%s"\n' "$m"
+      done
+      for c in advise --json --show-all --dismiss; do
+        printf 'complete -c apx -n "__fish_seen_subcommand_from config" -a "%s"\n' "$c"
       done
       for c in $chain_subs; do
         printf 'complete -c apx -n "__fish_seen_subcommand_from chain" -a "%s"\n' "$c"
@@ -3904,6 +4070,7 @@ Commands:
   disable              Stop stack/gateway and remove ANTHROPIC_BASE_URL
   restart [--takeover] Stop then start
   status               Show current health and pids
+  config advise        Review safe configuration recommendations (read-only)
   optimizer            Show source/ownership/update status; plan managed changes
   mode [preset]        Show/set mode preset and sync Claude settings
   chain <sub>          Get/set the routing chain (get|set|clear|ls|preset)
@@ -3976,6 +4143,7 @@ case "$cmd" in
   disable) disable_stack ;;
   restart) restart_service "${1:-}" ;;
   status) status ;;
+  config) config_command "$@" ;;
   optimizer) optimizer_command "$@" ;;
   mode) set_mode "${@:-current}" ;;
   chain) chain_cli "$@" ;;

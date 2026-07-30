@@ -638,6 +638,25 @@ Common fixes: use the persistent `apx pxpipe models set ...` and `apx headroom s
 
 Further self-service guides: [dashboard metrics](docs/DASHBOARD_METRICS.md) and [optimizer ownership](docs/OPTIMIZER_OWNERSHIP.md).
 
+### Configuration advisor
+
+Run the local, read-only advisor after installation, an upgrade, or when the
+dashboard cannot explain token savings:
+
+```bash
+apx config advise
+apx config advise --json                 # for scripts and support tooling
+apx config advise --dismiss metrics-disabled
+```
+
+It checks only deterministic local facts: token-metrics availability, known
+pxpipe model capability, externally exposed dashboard protection, non-local
+HTTP upstreams, optimizer ownership, and the cached daily optimizer update
+result. Every finding includes its impact and an exact next command. It never
+contacts a registry, changes `config.env`, or restarts a service. Dismissals
+are stored by advisory ID and guidance version under apx state; use `--show-all`
+to review them later.
+
 ## URLs
 
 ```text

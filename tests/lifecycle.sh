@@ -142,6 +142,28 @@ if "$APX" headroom settings set tls-strict off --no-restart >/dev/null 2>&1; the
 fi
 "$APX" squeezr bypass --help >/dev/null
 
+# The configuration advisor must stay local/read-only, provide a stable JSON
+# shape, and let a user explicitly dismiss an intentional recommendation.
+advisor_json="$("$APX" config advise --json)"
+if [[ "$advisor_json" != *'"id":"metrics-disabled"'* || "$advisor_json" != *'"severity":"recommended"'* ]]; then
+  echo "ERROR: config advisor did not report disabled metrics as JSON" >&2
+  exit 1
+fi
+"$APX" config advise --dismiss metrics-disabled >/dev/null
+if "$APX" config advise | grep -q 'Enable durable token metrics'; then
+  echo "ERROR: dismissed configuration advisory was still active" >&2
+  exit 1
+fi
+advisor_all="$("$APX" config advise --show-all)"
+if [[ "$advisor_all" != *'Status: dismissed'* ]]; then
+  echo "ERROR: config advisor did not show dismissed advisory on request" >&2
+  exit 1
+fi
+if "$APX" config advise --json --dismiss metrics-disabled >/dev/null 2>&1; then
+  echo "ERROR: config advisor accepted incompatible JSON/dismiss flags" >&2
+  exit 1
+fi
+
 second="$("$APX" start 2>&1)"
 if [[ "$second" != *"already running"* ]]; then
   echo "ERROR: Expected 'already running' message, got: $second" >&2

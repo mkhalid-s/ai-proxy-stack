@@ -359,9 +359,9 @@ install_deps() {
     if [[ -n "$npm_cache" ]]; then
       manifest_set NPM_CACHE_DIR "$npm_cache"
     fi
-    run_step "prewarm pxpipe-proxy npm cache" npm cache add pxpipe-proxy@0.8.0
+    run_step "prewarm pxpipe-proxy npm cache" npm cache add pxpipe-proxy@0.11.1
     manifest_set NPM_WARMED_PXPIPE_PROXY 1
-    record_npm_cache_path pxpipe-proxy@0.8.0 NPM_PXPIPE_PROXY_CACHE_PATH "$npm_cache"
+    record_npm_cache_path pxpipe-proxy@0.11.1 NPM_PXPIPE_PROXY_CACHE_PATH "$npm_cache"
     run_step "prewarm squeezr-ai npm cache" npm cache add "$SQUEEZR_PACKAGE_SPEC_DEFAULT"
     manifest_set NPM_WARMED_SQUEEZR_AI 1
     record_npm_cache_path "$SQUEEZR_PACKAGE_SPEC_DEFAULT" NPM_SQUEEZR_AI_CACHE_PATH "$npm_cache"
@@ -497,10 +497,10 @@ sync_runtime() {
   # A fresh config uses npx by default. If npx is unavailable, switch only
   # that untouched default to npm exec; never rewrite a user-provided command.
   if [[ "$CHECK_ONLY" != "1" && -f "$RUNTIME_CONFIG" ]] && ! have npx \
-    && grep -qx 'PXPIPE_CMD="npx -y pxpipe-proxy@0.8.0"' "$RUNTIME_CONFIG"; then
+    && grep -qx 'PXPIPE_CMD="npx -y pxpipe-proxy@0.11.1"' "$RUNTIME_CONFIG"; then
     local tmp_cfg
     tmp_cfg="$(mktemp)"
-    sed 's|^PXPIPE_CMD="npx -y pxpipe-proxy@0.8.0"$|PXPIPE_CMD="npm exec --yes pxpipe-proxy@0.8.0"|' "$RUNTIME_CONFIG" > "$tmp_cfg"
+    sed 's|^PXPIPE_CMD="npx -y pxpipe-proxy@0.11.1"$|PXPIPE_CMD="npm exec --yes pxpipe-proxy@0.11.1"|' "$RUNTIME_CONFIG" > "$tmp_cfg"
     mv "$tmp_cfg" "$RUNTIME_CONFIG"
     log "npx is unavailable; selected npm exec for the default pxpipe command"
   fi

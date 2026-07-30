@@ -484,12 +484,12 @@ jobs:
 
           # 1) Test when npx is present
           HOME="$fake_home" ./install.sh --yes --no-service --skip-deps
-          grep -q 'PXPIPE_CMD="npx -y pxpipe-proxy@0.8.0"' "$fake_home/.config/apx/config.env"
+          grep -q 'PXPIPE_CMD="npx -y pxpipe-proxy@0.11.1"' "$fake_home/.config/apx/config.env"
 
           # 2) Test fallback when npx is absent
           rm -rf "$fake_home/.config/apx"
           APX_TEST_NO_NPX=1 HOME="$fake_home" ./install.sh --yes --no-service --skip-deps
-          grep -q 'PXPIPE_CMD="npm exec --yes pxpipe-proxy@0.8.0"' "$fake_home/.config/apx/config.env"
+          grep -q 'PXPIPE_CMD="npm exec --yes pxpipe-proxy@0.11.1"' "$fake_home/.config/apx/config.env"
 
   # ── 2) Pack apx.sh on both Linux and macOS to catch tool differences ─────
   pack:

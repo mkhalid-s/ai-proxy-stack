@@ -81,7 +81,7 @@ load_config() {
   : "${HEADROOM_ENABLED:=1}"
   : "${SQUEEZR_ENABLED:=0}"
   : "${GATEWAY_CMD:=$HOME/.local/bin/apx-gateway}"
-  : "${PXPIPE_CMD:=npx -y pxpipe-proxy@0.8.0}"
+  : "${PXPIPE_CMD:=npx -y pxpipe-proxy@0.11.1}"
   : "${SQUEEZR_CMD:=$HOME/.local/bin/apx-squeezr}"
   : "${SQUEEZR_PACKAGE_SPEC:=squeezr-ai@1.99.2}"
   : "${PXPIPE_MODELS:=claude-fable-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5}"
@@ -911,7 +911,7 @@ optimizer_ownership() {
       fi
       ;;
     pxpipe)
-      if [[ "$PXPIPE_CMD" == "npx -y pxpipe-proxy@0.8.0" || "$PXPIPE_CMD" == "npm exec --yes pxpipe-proxy@0.8.0" ]]; then
+      if [[ "$PXPIPE_CMD" == "npx -y pxpipe-proxy@0.11.1" || "$PXPIPE_CMD" == "npm exec --yes pxpipe-proxy@0.11.1" ]]; then
         printf '%s\n' configured-default
       else
         printf '%s\n' external

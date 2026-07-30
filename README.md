@@ -113,6 +113,7 @@ upstream projects, APIs, data formats, and release cycles.
 - [Linux and Devcontainers](docs/DEVCONTAINER.md)
 - [Dashboard](#dashboard)
 - [Updating](#updating)
+- [First Session Guide](#first-session-guide)
 - [Claude Code Setting](#claude-code-setting)
 - [Modes and Chains](#modes-and-chains)
 - [Upstream Target](#upstream-target)
@@ -128,6 +129,55 @@ upstream projects, APIs, data formats, and release cycles.
 
 LeanRelay ships as a self-contained `apx` release. Pick whichever install path
 matches how you work.
+
+## First Session Guide
+
+After installation, this is the shortest safe path from “it started” to
+understanding what it is doing:
+
+```bash
+apx status                 # confirm Gateway and selected optimizers are healthy
+apx urls                   # print the local dashboard URL
+apx optimizer              # see source and ownership before changing an optimizer
+```
+
+Open the dashboard, make a few normal model requests, then choose a time
+window. Start with **Needs Attention**: it tells you whether an optimizer is
+unreachable, telemetry is incomplete, or a traffic comparison needs review.
+Then use **Token Consumption & Verified Savings** and **Optimizer Measurement
+Coverage**. Do not treat an empty savings value as zero savings—it usually
+means the optimizer did not supply per-request measurements.
+
+Use these safe controls for common changes; they persist through service
+restart and supported service backends:
+
+```bash
+apx pxpipe models set off                 # retain pxpipe, disable image conversion
+apx headroom settings set tool-search off # change one safe Headroom feature
+apx squeezr bypass on                     # bypass Squeezr compression temporarily
+```
+
+### What survives a restart?
+
+| Item | Persists? | Where / how to change it |
+| --- | --- | --- |
+| Chain, targets, ports, pxpipe models, Headroom settings | Yes | `~/.config/apx/config.env` or the `apx` commands above |
+| Squeezr bypass | Yes | Squeezr's own state; use `apx squeezr bypass` |
+| Request history, sessions, optimizer attempts, health snapshots | Yes | Local SQLite/JSONL; controlled by metrics retention |
+| Dashboard window and selected request/session | Yes | Browser local storage |
+| Dashboard model chips and live charts | No | Runtime/UI state; refresh or service restart can reset them |
+
+### When should I trust a savings number?
+
+| Label | Meaning | Safe interpretation |
+| --- | --- | --- |
+| `measured` | Adapter supplied explicit before/after input tokens | Suitable for a verified savings total |
+| `estimated` | Adapter supplied an estimate | Useful context; keep separate from verified totals |
+| `unavailable` | No complete per-request measurement arrived | Do not infer savings from aggregate traffic |
+
+Chain and model comparisons are observational: they compare aggregate traffic
+in the same window, but cannot prove an optimizer caused a latency, cost, or
+error-rate change. Compare like-for-like workloads before changing a chain.
 
 ### Release mode (single-file installer, no git required)
 

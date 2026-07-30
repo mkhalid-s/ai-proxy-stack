@@ -956,9 +956,47 @@ No optimizer is installed, upgraded, or removed by this command.
 EOF
 }
 
+optimizer_latest() {
+  local headroom="unavailable" pxpipe="unavailable" squeezr="unavailable" pip_index headroom_current="unavailable" pxpipe_current squeezr_current
+  load_config
+  if command -v npm >/dev/null 2>&1; then
+    pxpipe="$(npm view pxpipe-proxy version 2>/dev/null | tr -d '[:space:]' || true)"
+    squeezr="$(npm view squeezr-ai version 2>/dev/null | tr -d '[:space:]' || true)"
+    [[ -n "$pxpipe" ]] || pxpipe="unavailable"
+    [[ -n "$squeezr" ]] || squeezr="unavailable"
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    pip_index="$(python3 -m pip index versions headroom-ai 2>/dev/null | head -n 1 || true)"
+    headroom="$(printf '%s\n' "$pip_index" | sed -n 's/.*(\([^)]*\)).*/\1/p')"
+    [[ -n "$headroom" ]] || headroom="unavailable"
+  fi
+  if command -v headroom >/dev/null 2>&1; then
+    headroom_current="$(headroom --version 2>/dev/null | head -n 1 | sed -n 's/.*\([0-9][0-9.]*\).*/\1/p')"
+    [[ -n "$headroom_current" ]] || headroom_current="unavailable"
+  fi
+  pxpipe_current="${PXPIPE_PACKAGE_SPEC##*@}"
+  squeezr_current="${SQUEEZR_PACKAGE_SPEC##*@}"
+  optimizer_version_status() {
+    local current="$1" latest="$2"
+    if [[ "$current" == "unavailable" || "$latest" == "unavailable" ]]; then printf '%s' unavailable
+    elif [[ "$current" == "$latest" ]]; then printf '%s' current
+    else printf '%s' "update available"
+    fi
+  }
+  cat <<EOF
+latest optimizer versions (registry lookup; read-only)
+headroom-ai (PyPI): current=${headroom_current} latest=${headroom} status=$(optimizer_version_status "$headroom_current" "$headroom")
+pxpipe-proxy (npm): current=${pxpipe_current} latest=${pxpipe} status=$(optimizer_version_status "$pxpipe_current" "$pxpipe")
+squeezr-ai (npm): current=${squeezr_current} latest=${squeezr} status=$(optimizer_version_status "$squeezr_current" "$squeezr")
+
+This command did not install, upgrade, or alter any optimizer.
+EOF
+}
+
 optimizer_command() {
   case "${1:-sources}" in
     sources|status) shift || true; [[ $# -eq 0 ]] || { echo "usage: apx optimizer [sources]" >&2; return 2; }; optimizer_sources ;;
+    latest) shift || true; [[ $# -eq 0 ]] || { echo "usage: apx optimizer latest" >&2; return 2; }; optimizer_latest ;;
     reconcile)
       shift || true
       local name="${1:-}" version="${2:-}" dry_run="${3:-}"
@@ -975,10 +1013,11 @@ optimizer_command() {
       ;;
     help|-h|--help)
       cat <<'EOF'
-usage: apx optimizer [sources] | reconcile <optimizer> <version> --dry-run
+usage: apx optimizer [sources|latest] | reconcile <optimizer> <version> --dry-run
 
   sources                         Show package source, configured command,
                                   ownership, and local version information.
+  latest                          Query PyPI/npm for latest versions; read-only.
   reconcile headroom VERSION
       --dry-run                   Print the exact managed Headroom change
                                   without installing, upgrading, or restarting.
@@ -3639,7 +3678,7 @@ ZSH
     chain) _describe -t chain 'apx chain' chain_subs && _describe -t services 'services' services ;;
     target) _describe -t target 'apx target' target_subs ;;
     port) _describe -t port 'apx port' port_subs && _describe -t port-services 'services' port_services ;;
-    optimizer) _values 'optimizer action' 'sources' 'status' 'reconcile' 'headroom' 'pxpipe' 'squeezr' '--dry-run' ;;
+    optimizer) _values 'optimizer action' 'sources' 'status' 'latest' 'reconcile' 'headroom' 'pxpipe' 'squeezr' '--dry-run' ;;
     headroom) _values 'headroom action' 'settings' 'get' 'set' 'tool-search' 'code-aware' 'code-graph' 'on' 'off' '--no-restart' ;;
     pxpipe) _values 'pxpipe action' 'models' 'get' 'set' 'off' '--no-restart' ;;
     squeezr) _values 'squeezr action' 'bypass' 'get' 'on' 'off' ;;
@@ -3687,7 +3726,7 @@ FISH
       cat <<'FISH'
 complete -c apx -n "__fish_seen_subcommand_from completions" -a "bash zsh fish install uninstall"
 complete -c apx -n "__fish_seen_subcommand_from debug" -a "level get set info debug trace --no-restart"
-complete -c apx -n "__fish_seen_subcommand_from optimizer" -a "sources status reconcile headroom pxpipe squeezr --dry-run"
+complete -c apx -n "__fish_seen_subcommand_from optimizer" -a "sources status latest reconcile headroom pxpipe squeezr --dry-run"
 complete -c apx -n "__fish_seen_subcommand_from headroom" -a "settings get set tool-search code-aware code-graph on off"
 complete -c apx -n "__fish_seen_subcommand_from headroom" -l no-restart
 complete -c apx -n "__fish_seen_subcommand_from pxpipe" -a "models get set off"

@@ -3904,8 +3904,7 @@ Commands:
   disable              Stop stack/gateway and remove ANTHROPIC_BASE_URL
   restart [--takeover] Stop then start
   status               Show current health and pids
-  optimizer            Show optimizer source/ownership status; dry-run reconcile planning
-  optimizer            Show read-only optimizer source and ownership status
+  optimizer            Show source/ownership/update status; plan managed changes
   mode [preset]        Show/set mode preset and sync Claude settings
   chain <sub>          Get/set the routing chain (get|set|clear|ls|preset)
   target <sub>         Get/set upstream API endpoint (get|set|reset)

@@ -2143,6 +2143,38 @@ def _read_dashboard_html() -> bytes:
     return b"<!doctype html><meta charset=utf-8><title>apx</title><h1>apx dashboard not installed</h1>"
 
 
+def _read_dashboard_asset(path: str) -> tuple[bytes, str] | None:
+    """Return a gateway-served dashboard asset, rejecting traversal and symlinks.
+
+    The UI build is optional during migration. Assets are served only from the
+    explicitly configured static directory, and remain behind the same
+    dashboard authentication and origin checks as the HTML document.
+    """
+    if not DASHBOARD_STATIC_DIR or not path.startswith("/assets/"):
+        return None
+    try:
+        root = Path(DASHBOARD_STATIC_DIR).resolve(strict=True)
+        relative = Path(unquote(path[len("/assets/") :]))
+        if relative.is_absolute() or ".." in relative.parts:
+            return None
+        unresolved = root
+        for part in relative.parts:
+            unresolved = unresolved / part
+            if unresolved.is_symlink():
+                return None
+        candidate = unresolved.resolve(strict=True)
+        if root not in candidate.parents or not candidate.is_file():
+            return None
+        if candidate.stat().st_size > 10 * 1024 * 1024:
+            return None
+        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        if content_type.startswith("text/") or content_type in {"application/javascript", "application/json"}:
+            content_type += "; charset=utf-8"
+        return candidate.read_bytes(), content_type
+    except (OSError, ValueError):
+        return None
+
+
 class RequestBodyTooLarge(Exception):
     pass
 
@@ -2307,6 +2339,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         is_dashboard_path = (
             path in {"/", "/dashboard", "/metrics"}
             or path.startswith("/api/")
+            or path.startswith("/assets/")
             or path.startswith("/proxy/pxpipe")
             or path.startswith("/proxy/squeezr")
         )
@@ -2328,6 +2361,23 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self._require_token()
                 return True
             self._passthrough(SQUEEZR_URL, path[len("/proxy/squeezr"):] or "/squeezr/dashboard", passthrough_query, prefix="/proxy/squeezr")
+            return True
+
+        if path.startswith("/assets/"):
+            if not self._authorized_for_dashboard(allow_query=False):
+                self._require_token()
+                return True
+            asset = _read_dashboard_asset(path)
+            if asset is None:
+                self._respond(404, b"dashboard asset not found", content_type="text/plain; charset=utf-8")
+                return True
+            body, content_type = asset
+            self._respond(
+                200,
+                body,
+                content_type=content_type,
+                extra_headers={"cache-control": "public, max-age=3600", "x-content-type-options": "nosniff"},
+            )
             return True
 
         if path in ("/", "/dashboard"):

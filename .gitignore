@@ -9,6 +9,10 @@ state/**
 *.pid
 *.adopted.pid
 
+# Dashboard build dependencies are local; compiled static assets are produced
+# deliberately into share/dashboard for the release/install flow.
+dashboard/node_modules/
+
 # Local runtime backups created by install.sh
 *.bak.*
 

@@ -8,6 +8,7 @@ SRC_SQUEEZR_BIN="$STACK_ROOT/bin/apx-squeezr"
 SRC_CONFIG="$STACK_ROOT/config/config.env"
 SRC_VERSION_FILE="$STACK_ROOT/VERSION"
 SRC_DASHBOARD_HTML="$STACK_ROOT/share/dashboard.html"
+SRC_DASHBOARD_STATIC_DIR="$STACK_ROOT/share/dashboard"
 
 RUNTIME_BIN_DIR="$HOME/.local/bin"
 RUNTIME_BIN="$RUNTIME_BIN_DIR/apx"
@@ -21,6 +22,7 @@ RUNTIME_VERSION_FILE="$RUNTIME_STATE/VERSION"
 RUNTIME_INSTALL_MANIFEST="$RUNTIME_STATE/install-manifest.env"
 RUNTIME_SHARE_DIR="$HOME/.local/share/apx"
 RUNTIME_DASHBOARD_HTML="$RUNTIME_SHARE_DIR/dashboard.html"
+RUNTIME_DASHBOARD_STATIC_DIR="$RUNTIME_SHARE_DIR/dashboard"
 
 STACK_VERSION="$( [ -f "$SRC_VERSION_FILE" ] && head -n 1 "$SRC_VERSION_FILE" | tr -d '[:space:]' || echo "unknown" )"
 SQUEEZR_PACKAGE_SPEC_DEFAULT="squeezr-ai@1.99.2"
@@ -394,6 +396,10 @@ sync_dashboard() {
   fi
   mkdir -p "$RUNTIME_SHARE_DIR"
   run_step "install dashboard html" cp "$SRC_DASHBOARD_HTML" "$RUNTIME_DASHBOARD_HTML"
+  if [[ -d "$SRC_DASHBOARD_STATIC_DIR" ]]; then
+    mkdir -p "$RUNTIME_DASHBOARD_STATIC_DIR"
+    run_step "install dashboard static assets" cp -R "$SRC_DASHBOARD_STATIC_DIR/." "$RUNTIME_DASHBOARD_STATIC_DIR/"
+  fi
 }
 
 install_bin() {

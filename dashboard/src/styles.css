@@ -1,0 +1,7 @@
+/* Shared tokens for migrated Svelte components. The legacy stylesheet stays
+   authoritative until the screen-by-screen migration is complete. */
+:root {
+  --apx-accent: #76e4b7;
+  --apx-danger: #ff7b86;
+  --apx-warning: #ffc56d;
+}

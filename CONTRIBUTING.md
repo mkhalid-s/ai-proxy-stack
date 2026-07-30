@@ -13,6 +13,9 @@ bash -n bin/apx
 bash -n bin/apx-squeezr
 python3 -c "import ast; ast.parse(open('bin/apx-gateway').read())"
 ./install.sh --check-only
+./tests/dashboard.sh
+./tests/lifecycle.sh
+(cd dashboard && npm run check && npm run build)
 ```
 
 Keep scripts portable:
@@ -20,6 +23,13 @@ Keep scripts portable:
 - Do not commit user-specific absolute paths.
 - Do not commit runtime logs, PID files, or generated LaunchAgent output.
 - Keep dependency installation explicit and visible to the user.
+- Preserve external optimizer ownership: installer or update changes must not
+  install, upgrade, remove, or rewrite an externally configured optimizer.
+- Treat package-version changes as compatibility changes: update defaults,
+  installer fallback coverage, release notes, and dashboard telemetry only
+  after verifying the package executable and supported Node/Python versions.
+- Update first-time-user documentation when changing a command, persistence,
+  dashboard metric, ownership label, or security boundary.
 - Preserve the `apx`, `apx-gateway`, and `apx-squeezr` command names; legacy
   `ai-proxy-stack*` shims are not installed.
 
@@ -57,4 +67,5 @@ Existing users pick up the new version by running `apx update`.
 ## Security
 
 Do not include API keys, provider tokens, local credentials, or private logs in
-issues or pull requests.
+issues or pull requests. Report vulnerabilities through the private process in
+[SECURITY.md](SECURITY.md), not in a public issue.

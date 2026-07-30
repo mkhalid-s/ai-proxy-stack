@@ -897,6 +897,36 @@ manifest_flag_is_one() {
   [[ "$value" == "1" ]]
 }
 
+optimizer_ownership() {
+  local optimizer="$1" recorded
+  case "$optimizer" in
+    headroom)
+      recorded="$(manifest_get HEADROOM_OWNERSHIP 2>/dev/null || true)"
+      if [[ "$recorded" == "apx-managed" || "$recorded" == "external" ]]; then
+        printf '%s\n' "$recorded"
+      elif command -v headroom >/dev/null 2>&1; then
+        printf '%s\n' external
+      else
+        printf '%s\n' unknown
+      fi
+      ;;
+    pxpipe)
+      if [[ "$PXPIPE_CMD" == "npx -y pxpipe-proxy@0.8.0" || "$PXPIPE_CMD" == "npm exec --yes pxpipe-proxy@0.8.0" ]]; then
+        printf '%s\n' configured-default
+      else
+        printf '%s\n' external
+      fi
+      ;;
+    squeezr)
+      if [[ "$SQUEEZR_CMD" == "$HOME/.local/bin/apx-squeezr" ]]; then
+        printf '%s\n' apx-managed-helper
+      else
+        printf '%s\n' external
+      fi
+      ;;
+  esac
+}
+
 safe_home_child() {
   local path="$1" real_home real_path
   case "$path" in
@@ -2324,7 +2354,7 @@ squeezr_command() {
 
 status() {
   load_config
-  local spid gpid ppid hpid sqpid gport pport hport sqport sstate ghealth phealth hhealth sqhealth mode installed latest
+  local spid gpid ppid hpid sqpid gport pport hport sqport sstate ghealth phealth hhealth sqhealth mode installed latest hownership pownership sqownership
   spid="$(read_pid "$RUN_DIR/supervisor.pid")"
   gpid="$(read_pid "$RUN_DIR/gateway.pid")"
   ppid="$(read_pid "$RUN_DIR/pxpipe.pid")"
@@ -2357,6 +2387,9 @@ status() {
   fi
   installed="$(read_installed_version)"
   mode="$(read_install_mode)"
+  hownership="$(optimizer_ownership headroom)"
+  pownership="$(optimizer_ownership pxpipe)"
+  sqownership="$(optimizer_ownership squeezr)"
   echo "version: $installed"
   if [[ "$mode" == "release" ]]; then
     latest="$(latest_available_version "$mode")"
@@ -2369,12 +2402,12 @@ status() {
   echo "chain: $(chain_description)"
   echo "supervisor: ${spid:-none} $sstate"
   echo "Gateway:   pidfile=${gpid:-none} listener=${gport:-none} health=$ghealth"
-  echo "pxpipe:    pidfile=${ppid:-none} listener=${pport:-none} health=$phealth"
+  echo "pxpipe:    pidfile=${ppid:-none} listener=${pport:-none} health=$phealth ownership=$pownership"
   if [[ "$PXPIPE_ENABLED" == "1" ]]; then
     echo "pxpipe models: $PXPIPE_MODELS"
   fi
-  echo "Headroom:  pidfile=${hpid:-none} listener=${hport:-none} health=$hhealth"
-  echo "Squeezr:   pidfile=${sqpid:-none} listener=${sqport:-none} health=$sqhealth"
+  echo "Headroom:  pidfile=${hpid:-none} listener=${hport:-none} health=$hhealth ownership=$hownership"
+  echo "Squeezr:   pidfile=${sqpid:-none} listener=${sqport:-none} health=$sqhealth ownership=$sqownership"
   if [[ "$SQUEEZR_ENABLED" == "1" ]]; then
     echo "Squeezr dashboard: http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/dashboard"
   fi

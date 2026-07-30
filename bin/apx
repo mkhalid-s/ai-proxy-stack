@@ -961,7 +961,32 @@ optimizer_command() {
         *) echo "unknown optimizer: $name" >&2; return 2 ;;
       esac
       ;;
-    help|-h|--help) echo "usage: apx optimizer [sources|reconcile <headroom|pxpipe|squeezr> <version> --dry-run]" ;;
+    help|-h|--help)
+      cat <<'EOF'
+usage: apx optimizer [sources] | reconcile <optimizer> <version> --dry-run
+
+  sources                         Show package source, configured command,
+                                  ownership, and local version information.
+  reconcile headroom VERSION
+      --dry-run                   Print the exact managed Headroom change
+                                  without installing, upgrading, or restarting.
+
+Ownership is deliberately conservative:
+  external                        Installed or configured by the user; apx
+                                  will never install, upgrade, or remove it.
+  apx-managed                     Installed by apx; eligible for an explicit
+                                  future reconcile after reviewing --dry-run.
+  configured-default              Uses apx's default npx command, but is not
+                                  an apx-owned global package.
+
+Examples:
+  apx optimizer
+  apx optimizer reconcile headroom 1.2.3 --dry-run
+
+pxpipe and Squeezr reconciliation is not enabled yet. This command never
+performs an automatic optimizer update.
+EOF
+      ;;
     *) echo "unknown optimizer action: $1" >&2; return 2 ;;
   esac
 }

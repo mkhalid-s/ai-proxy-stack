@@ -493,17 +493,6 @@ sync_runtime() {
   fi
 
   sync_config
-
-  if [[ "$CHECK_ONLY" != "1" && -f "$RUNTIME_CONFIG" ]]; then
-    local tmp_cfg
-    tmp_cfg="$(mktemp)"
-    if have npx; then
-      sed 's|^PXPIPE_CMD=.*|PXPIPE_CMD="npx -y pxpipe-proxy@0.8.0"|' "$RUNTIME_CONFIG" > "$tmp_cfg" && mv "$tmp_cfg" "$RUNTIME_CONFIG"
-    else
-      # Use npm exec as a fallback (npm is guaranteed by install_deps)
-      sed 's|^PXPIPE_CMD=.*|PXPIPE_CMD="npm exec --yes pxpipe-proxy@0.8.0"|' "$RUNTIME_CONFIG" > "$tmp_cfg" && mv "$tmp_cfg" "$RUNTIME_CONFIG"
-    fi
-  fi
 }
 
 configure_claude_client() {

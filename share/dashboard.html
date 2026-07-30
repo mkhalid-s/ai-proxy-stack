@@ -149,6 +149,7 @@
     .attention-item.info { border-left-color: var(--accent); }
     .attention-title { font-weight: 700; }
     .attention-detail, .attention-action { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    body.svelte-overview-active .legacy-overview, body.svelte-overview-active #legacy-timeseries { display: none; }
     .mini-chart {
       width: 100%;
       height: 160px;
@@ -250,7 +251,9 @@
   </header>
 
   <main>
-    <section class="grid">
+    <div id="svelte-overview"></div>
+
+    <section class="grid legacy-overview">
       <div class="card">
         <h2>Requests</h2>
         <div class="kpi" id="k-requests">-</div>
@@ -278,7 +281,7 @@
       </div>
     </section>
 
-    <details class="accordion" open>
+    <details class="accordion" open id="legacy-timeseries">
       <summary><h2>Needs Attention</h2><span class="badge" id="attention-count">loading</span></summary>
       <div class="content"><div class="attention-list" id="attention-body"><div class="muted">Evaluating persisted dashboard signals...</div></div></div>
     </details>
@@ -1175,5 +1178,6 @@
       if (logRetryTimer) clearTimeout(logRetryTimer);
     });
   </script>
+  <script type="module" src="/assets/app.js"></script>
 </body>
 </html>

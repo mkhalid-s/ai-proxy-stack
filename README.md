@@ -271,7 +271,7 @@ Existing runtime config is preserved on reinstall. The installer backs it up and
 
 ## Dashboard
 
-Open [http://127.0.0.1:8787/](http://127.0.0.1:8787/) after installing to see a single pane that aggregates every component. The dashboard is served by `apx-gateway`; its primary overview is a bundled Svelte/uPlot module, while specialized controls retain a safe legacy fallback. Assets are revalidated after an apx upgrade so the overview does not remain stale.
+Open [http://127.0.0.1:8787/](http://127.0.0.1:8787/) after installing for a focused token-efficiency overview: attention signals, tokens processed, verified savings, measurement coverage, and gateway/optimizer health. The dashboard is served by `apx-gateway` as a bundled Svelte/uPlot module. Use `apx status`, `apx doctor`, logs, and support bundles for detailed operations instead of turning the dashboard into an operations console. Assets are revalidated after an apx upgrade so the overview does not remain stale.
 
 It includes:
 

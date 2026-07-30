@@ -23,8 +23,6 @@
   const number = (value) => new Intl.NumberFormat().format(Number(value || 0));
   /** @param {unknown} value */
   const ms = (value) => `${Number(value || 0).toFixed(Number(value || 0) < 100 ? 1 : 0)} ms`;
-  /** @param {unknown} value */
-  const usd = (value) => `$${Number(value || 0).toFixed(4)}`;
   /** @param {unknown} numerator @param {unknown} denominator */
   const percentage = (numerator, denominator) => Number(denominator || 0) ? `${(Number(numerator || 0) / Number(denominator) * 100).toFixed(0)}%` : "not measured";
   /** @param {string} value */
@@ -107,18 +105,15 @@
   }
 
   onMount(() => {
-    document.body.classList.add("svelte-overview-active");
     refresh();
     const selector = document.querySelector("#window-select");
     const onWindowChange = () => refresh();
     selector?.addEventListener("change", onWindowChange);
     const interval = window.setInterval(refresh, 10_000);
     resizeObserver = new ResizeObserver(() => syncPlots());
-    document.querySelector("#legacy-dashboard")?.removeAttribute("open");
     if (tokenTarget) resizeObserver.observe(tokenTarget);
     if (savingsTarget) resizeObserver.observe(savingsTarget);
     return () => {
-      document.body.classList.remove("svelte-overview-active");
       selector?.removeEventListener("change", onWindowChange);
       window.clearInterval(interval);
       resizeObserver?.disconnect();
@@ -140,13 +135,6 @@
   $: optimizerAttempts = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.attempts || 0), 0);
   $: failures = Number(summary.totals?.err_5xx || 0) + Number(summary.totals?.warn_4xx || 0);
 
-  function openDetails() {
-    const details = /** @type {HTMLDetailsElement | null} */ (document.querySelector("#legacy-dashboard"));
-    if (details) {
-      details.open = true;
-      details.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  }
 </script>
 
 <section class="overview" aria-label="Gateway overview">
@@ -155,16 +143,13 @@
       <p class="eyebrow">LeanRelay · token efficiency</p>
       <h2>What needs your attention</h2>
     </div>
-    <div class="heading-actions">
-      <button class="details-button" type="button" on:click={openDetails}>Open details</button>
-      <span class:ok={!loading && !error} class:warn={loading} class:fail={!!error} class="status">
-        {error ? "refresh failed" : loading ? "refreshing" : `last ${windowValue}`}
-      </span>
-    </div>
+    <span class:ok={!loading && !error} class:warn={loading} class:fail={!!error} class="status">
+      {error ? "retrying" : loading ? "refreshing" : `last ${windowValue}`}
+    </span>
   </div>
 
   {#if error}
-    <div class="error">{error}. The legacy dashboard remains available below.</div>
+    <div class="error">{error}. Retrying automatically; use <code>apx status</code> if the problem persists.</div>
   {/if}
 
   <div class="attention">

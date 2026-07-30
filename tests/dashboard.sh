@@ -43,12 +43,11 @@ grep -qi '^set-cookie: apx_dashboard_token=' "$TMP/headers"
 curl -fsS -c "$TMP/cookies" "http://127.0.0.1:$PORT/?token=dashboard-test-token" -o /dev/null
 curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/" -o "$TMP/dashboard.html"
 grep -q 'id="svelte-overview"' "$TMP/dashboard.html"
-grep -q 'id="legacy-dashboard"' "$TMP/dashboard.html"
 grep -q 'src="/assets/app.js"' "$TMP/dashboard.html"
 curl -fsS -D "$TMP/asset-headers" -b "$TMP/cookies" "http://127.0.0.1:$PORT/assets/app.js" -o "$TMP/app.js"
 grep -q 'svelte-overview' "$TMP/app.js"
 grep -q 'Verified tokens saved' "$TMP/app.js"
-grep -q 'Open details' "$TMP/app.js"
+grep -q 'Token flow' "$TMP/app.js"
 grep -qi '^cache-control: no-cache' "$TMP/asset-headers"
 curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/attention?window=1h" -o "$TMP/attention.json"
 python3 - "$TMP/attention.json" <<'PY'

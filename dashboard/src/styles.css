@@ -6,14 +6,11 @@
 
 .overview { margin: 0 0 16px; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; color: var(--text, #e7eaf0); }
 .overview .heading, .overview .attention-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.overview .heading-actions { display: flex; align-items: center; gap: 8px; }
 .overview h2, .overview h3, .overview p { margin: 0; }
 .overview h2 { font-size: 18px; color: var(--text, #e7eaf0); letter-spacing: -.02em; text-transform: none; }
 .overview h3 { font-size: 13px; }
 .overview .eyebrow { color: var(--muted, #8f98aa); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
 .overview .status { border: 1px solid var(--border, #2c3340); border-radius: 999px; padding: 3px 9px; color: var(--muted, #8f98aa); font-size: 11px; font-weight: 650; white-space: nowrap; }
-.overview .details-button { border: 1px solid var(--border, #2c3340); border-radius: 8px; background: transparent; color: var(--text, #e7eaf0); cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; padding: 5px 9px; }
-.overview .details-button:hover, .overview .details-button:focus-visible { border-color: var(--accent, #7aa2ff); outline: none; }
 .overview .status.ok { color: var(--ok, #31c48d); }.overview .status.warn, .overview .signal.warning { color: var(--warn, #f6ad55); }.overview .status.fail, .overview .signal.critical { color: var(--fail, #f56565); }
 .overview .metrics, .overview .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-top: 14px; }
 .overview article { background: var(--panel, #171a21); border: 1px solid var(--border, #2c3340); border-radius: 12px; padding: 14px; }
@@ -33,4 +30,4 @@
 .overview .signal { border-left: 4px solid var(--accent, #7aa2ff); background: var(--panel-2, #1f2430); }.overview .signal.warning { border-left-color: var(--warn, #f6ad55); }.overview .signal.critical { border-left-color: var(--fail, #f56565); }
 .overview .signal strong, .overview .signal small, .overview .signal em { display: block; }.overview .signal small, .overview .signal em { margin-top: 3px; }
 .overview .error { margin-top: 12px; color: var(--fail, #f56565); }
-@media (max-width: 560px) { .overview .heading { align-items: flex-start; flex-direction: column; }.overview .heading-actions { width: 100%; justify-content: space-between; }.overview .optimizer-grid { grid-template-columns: 1fr; }.overview .attention-list { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .overview .heading { align-items: flex-start; flex-direction: column; }.overview .optimizer-grid { grid-template-columns: 1fr; }.overview .attention-list { grid-template-columns: 1fr; } }

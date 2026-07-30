@@ -34,6 +34,7 @@ VERSIONS_DIR="$SHARE_DIR/versions"
 CURRENT_LINK="$SHARE_DIR/current"
 INSTALL_MODE_FILE="$CONFIG_DIR/install.mode"
 INSTALL_MANIFEST_FILE="$STATE_DIR/install-manifest.env"
+OPTIMIZER_UPDATE_CACHE_FILE="$STATE_DIR/optimizer-latest.txt"
 APX_RELEASE_REPO="${APX_RELEASE_REPO:-mkhalid-s/lean-relay}"
 RELEASE_ASSET_URL="${APX_RELEASE_ASSET_URL:-https://github.com/$APX_RELEASE_REPO/releases/latest/download/apx.sh}"
 RELEASE_ASSET_SHA_URL="${APX_RELEASE_ASSET_SHA_URL:-${RELEASE_ASSET_URL}.sha256}"
@@ -991,6 +992,38 @@ squeezr-ai (npm): current=${squeezr_current} latest=${squeezr} status=$(optimize
 
 This command did not install, upgrade, or alter any optimizer.
 EOF
+}
+
+maybe_check_optimizer_updates() {
+  local command="$1" stale
+  [[ "${APX_OPTIMIZER_AUTO_CHECK:-1}" == "1" ]] || return 0
+  case "$command" in help|-h|--help|completions|supervisor|run|optimizer) return 0 ;; esac
+  command -v python3 >/dev/null 2>&1 || return 0
+  stale="$(python3 - "$OPTIMIZER_UPDATE_CACHE_FILE" <<'PY'
+import os
+import sys
+import time
+path = sys.argv[1]
+try:
+    print(int(time.time() - os.path.getmtime(path) >= 86400))
+except OSError:
+    print(1)
+PY
+)"
+  [[ "$stale" == "1" ]] || return 0
+  (
+    mkdir -p "$STATE_DIR"
+    local tmp
+    tmp="$(mktemp "$STATE_DIR/optimizer-latest.XXXXXX")" || exit 0
+    APX_OPTIMIZER_AUTO_CHECK=0 "$0" optimizer latest > "$tmp" 2>/dev/null && mv "$tmp" "$OPTIMIZER_UPDATE_CACHE_FILE"
+  ) >/dev/null 2>&1 &
+}
+
+optimizer_update_summary() {
+  [[ -f "$OPTIMIZER_UPDATE_CACHE_FILE" ]] || return 0
+  if grep -q 'status=update available' "$OPTIMIZER_UPDATE_CACHE_FILE"; then
+    echo "optimizer updates: update available (run: apx optimizer latest)"
+  fi
 }
 
 optimizer_command() {
@@ -2513,6 +2546,7 @@ status() {
   echo "config: $CONFIG_FILE"
   echo "service backend: $(service_backend 2>/dev/null || echo unknown)"
   echo "log level: ${APX_LOG_LEVEL:-info}"
+  optimizer_update_summary
   echo "mode: $(current_mode)"
   echo "chain: $(chain_description)"
   echo "supervisor: ${spid:-none} $sstate"
@@ -3934,6 +3968,7 @@ EOF
 
 cmd="${1:-status}"
 shift || true
+maybe_check_optimizer_updates "$cmd"
 case "$cmd" in
   supervisor) supervisor ;;
   run) supervisor ;;

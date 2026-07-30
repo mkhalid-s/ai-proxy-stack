@@ -728,6 +728,11 @@ apx status
 command or package spec, ownership label, and any locally reported Headroom
 version. `apx status` includes the same ownership label next to service health.
 
+Run `apx optimizer latest` for an on-demand registry comparison. Normal apx
+commands also start a non-blocking registry check at most once per 24 hours;
+the local cached result appears in `apx status` when an update is available.
+This only reports availability—apx never automatically upgrades an optimizer.
+
 - `external` means the optimizer was installed or configured by the user. apx
   will never install, upgrade, remove, or rewrite its command.
 - `apx-managed` means an earlier apx install recorded ownership. Only these

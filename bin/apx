@@ -927,6 +927,23 @@ optimizer_ownership() {
   esac
 }
 
+optimizer_sources() {
+  load_config
+  local headroom_version="unavailable"
+  if command -v headroom >/dev/null 2>&1; then
+    headroom_version="$(headroom --version 2>/dev/null | head -n 1 || true)"
+    [[ -n "$headroom_version" ]] || headroom_version="present (version not reported)"
+  fi
+  cat <<EOF
+optimizer source status (read-only)
+headroom: source=PyPI package=headroom-ai ownership=$(optimizer_ownership headroom) local=${headroom_version}
+pxpipe:   source=npm package=pxpipe-proxy ownership=$(optimizer_ownership pxpipe) command=${PXPIPE_CMD}
+squeezr:  source=npm package=${SQUEEZR_PACKAGE_SPEC} ownership=$(optimizer_ownership squeezr) command=${SQUEEZR_CMD}
+
+No optimizer is installed, upgraded, or removed by this command.
+EOF
+}
+
 safe_home_child() {
   local path="$1" real_home real_path
   case "$path" in
@@ -3491,7 +3508,7 @@ EOF
 
 print_completions() {
   local shell="${1:-}"
-  local cmds="start stop disable restart run status mode chain target port headroom pxpipe squeezr claude doctor install uninstall supervisor logs support-bundle debug urls dashboard version check-updates update versions use rollback cleanup completions help"
+  local cmds="start stop disable restart run status optimizer mode chain target port headroom pxpipe squeezr claude doctor install uninstall supervisor logs support-bundle debug urls dashboard version check-updates update versions use rollback cleanup completions help"
   local modes="current headroom-pxpipe pxpipe-headroom headroom squeezr headroom-squeezr pxpipe direct off full"
   local chain_subs="get set clear ls preset help"
   local target_subs="get set reset help"
@@ -3753,6 +3770,7 @@ Commands:
   disable              Stop stack/gateway and remove ANTHROPIC_BASE_URL
   restart [--takeover] Stop then start
   status               Show current health and pids
+  optimizer            Show read-only optimizer source and ownership status
   mode [preset]        Show/set mode preset and sync Claude settings
   chain <sub>          Get/set the routing chain (get|set|clear|ls|preset)
   target <sub>         Get/set upstream API endpoint (get|set|reset)
@@ -3823,6 +3841,7 @@ case "$cmd" in
   disable) disable_stack ;;
   restart) restart_service "${1:-}" ;;
   status) status ;;
+  optimizer) optimizer_sources "$@" ;;
   mode) set_mode "${@:-current}" ;;
   chain) chain_cli "$@" ;;
   target) target_cli "$@" ;;

@@ -1869,6 +1869,105 @@ def _api_metrics_optimizer_snapshots(query: dict[str, list[str]]) -> dict[str, A
     return {"window": window, "durable": True, "snapshots": rows}
 
 
+def _api_metrics_attention(query: dict[str, list[str]]) -> dict[str, Any]:
+    """Return conservative, actionable signals derived from persisted telemetry.
+
+    These are deliberately observations rather than automatic remediation: the
+    dashboard should make missing measurements and degraded optimizers visible
+    without claiming that aggregate traffic comparisons prove causality.
+    """
+    window = (query.get("window", ["24h"])[0] or "24h").lower()
+    since = time.time() - _window_seconds(window)
+    if not METRICS.enabled:
+        return {
+            "window": window,
+            "since_ts": since,
+            "durable": False,
+            "alerts": [{
+                "id": "metrics_not_persistent",
+                "severity": "critical",
+                "title": "Dashboard data is not persistent",
+                "detail": "SQLite metrics are unavailable, so restart-safe operations and savings evidence cannot be retained.",
+                "action": "Restore the metrics directory or its write permissions.",
+            }],
+        }
+
+    alerts: list[dict[str, str]] = []
+    efficiency = _api_metrics_efficiency({"window": [window]})
+    for row in efficiency.get("optimizers", []):
+        optimizer = str(row.get("optimizer") or "optimizer")
+        attempts = int(row.get("attempts") or 0)
+        measured = int(row.get("measured_attempts") or 0)
+        unavailable = int(row.get("unavailable_attempts") or 0)
+        if attempts and measured == 0:
+            alerts.append({
+                "id": f"missing_verified_measurements:{optimizer}",
+                "severity": "warning",
+                "title": f"{optimizer} savings cannot be verified",
+                "detail": f"{attempts} optimizer attempt(s) were recorded, but none supplied explicit pre/post token measurements.",
+                "action": "Enable the optimizer adapter's per-request metrics header before relying on savings totals.",
+            })
+        elif unavailable > measured:
+            alerts.append({
+                "id": f"partial_measurement_coverage:{optimizer}",
+                "severity": "warning",
+                "title": f"{optimizer} has incomplete savings coverage",
+                "detail": f"{measured}/{attempts} attempt(s) have verified measurements; {unavailable} are unavailable.",
+                "action": "Investigate adapter telemetry before comparing savings across this window.",
+            })
+
+    for chain in _api_metrics_chains({"window": [window]}).get("chains", []):
+        regression = chain.get("observational_regression") or {}
+        flags = regression.get("flags") or []
+        if flags:
+            chain_name = str(chain.get("chain_mode") or "optimized chain")
+            alerts.append({
+                "id": f"observational_regression:{chain_name}",
+                "severity": "warning",
+                "title": f"Observed regression for {chain_name}",
+                "detail": "; ".join(str(flag) for flag in flags) + ". This is an aggregate direct-vs-chain comparison, not causal proof.",
+                "action": "Compare like-for-like workloads before changing the optimizer chain.",
+            })
+
+    snapshots = METRICS.query(
+        "SELECT optimizer, reachable, ts FROM optimizer_snapshots WHERE ts >= ? ORDER BY ts DESC",
+        (since,),
+    )
+    latest_snapshots: dict[str, dict[str, Any]] = {}
+    for snapshot in snapshots:
+        latest_snapshots.setdefault(str(snapshot["optimizer"]), snapshot)
+    for optimizer, snapshot in latest_snapshots.items():
+        if not bool(snapshot.get("reachable")):
+            alerts.append({
+                "id": f"optimizer_unreachable:{optimizer}",
+                "severity": "critical",
+                "title": f"{optimizer} is unreachable",
+                "detail": "The most recent persisted optimizer health snapshot reports it as unreachable.",
+                "action": "Check the optimizer service and its configured endpoint.",
+            })
+
+    failures = METRICS.query(
+        "SELECT service, COUNT(*) AS count FROM service_events "
+        "WHERE ts >= ? AND event = 'health_changed' AND detail LIKE '%->fail' "
+        "GROUP BY service ORDER BY service",
+        (since,),
+    )
+    for failure in failures:
+        service = str(failure["service"])
+        count = int(failure["count"] or 0)
+        alerts.append({
+            "id": f"service_health_failures:{service}",
+            "severity": "warning",
+            "title": f"{service} health degraded in this window",
+            "detail": f"{count} transition(s) into a failed health state were recorded.",
+            "action": "Review the Operations event log and service logs for the affected interval.",
+        })
+
+    rank = {"critical": 0, "warning": 1, "info": 2}
+    alerts.sort(key=lambda alert: (rank.get(alert["severity"], 3), alert["title"]))
+    return {"window": window, "since_ts": since, "durable": True, "alerts": alerts}
+
+
 def _api_metrics_timeseries(query: dict[str, list[str]]) -> dict[str, Any]:
     window = (query.get("window", ["1h"])[0] or "1h").lower()
     bucket = (query.get("bucket", ["1m"])[0] or "1m").lower()
@@ -2594,6 +2693,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return True
         if path == "/api/metrics/optimizer-snapshots":
             self._respond_json(200, _api_metrics_optimizer_snapshots(query))
+            return True
+        if path == "/api/metrics/attention":
+            self._respond_json(200, _api_metrics_attention(query))
             return True
         if path == "/api/metrics/timeseries":
             self._respond_json(200, _api_metrics_timeseries(query))

@@ -136,6 +136,19 @@
     .accordion[open] > summary { border-bottom-color: var(--border); }
     .accordion > summary::-webkit-details-marker { display: none; }
     .accordion .content { padding: 16px; }
+    .attention-list { display: grid; gap: 10px; }
+    .attention-item {
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 9px;
+      padding: 11px 12px;
+      background: var(--panel-2);
+    }
+    .attention-item.critical { border-left-color: var(--fail); }
+    .attention-item.warning { border-left-color: var(--warn); }
+    .attention-item.info { border-left-color: var(--accent); }
+    .attention-title { font-weight: 700; }
+    .attention-detail, .attention-action { color: var(--muted); font-size: 12px; margin-top: 3px; }
     .mini-chart {
       width: 100%;
       height: 160px;
@@ -264,6 +277,11 @@
         <div class="chain" id="chain-view">-</div>
       </div>
     </section>
+
+    <details class="accordion" open>
+      <summary><h2>Needs Attention</h2><span class="badge" id="attention-count">loading</span></summary>
+      <div class="content"><div class="attention-list" id="attention-body"><div class="muted">Evaluating persisted dashboard signals...</div></div></div>
+    </details>
 
     <details class="accordion" open>
       <summary><h2>Tool Comparison</h2><span class="badge" id="compare-count">0 tools</span></summary>
@@ -690,6 +708,20 @@
       ).join("\n") || "No lifecycle events recorded yet.";
     }
 
+    function renderAttention(j) {
+      const alerts = j.alerts || [];
+      const critical = alerts.some(alert => alert.severity === "critical");
+      const warning = alerts.some(alert => alert.severity === "warning");
+      $("attention-count").textContent = alerts.length ? `${alerts.length} signal${alerts.length === 1 ? "" : "s"}` : "clear";
+      $("attention-count").className = `badge ${critical ? "fail" : warning ? "warn" : "ok"}`;
+      $("attention-body").innerHTML = alerts.length ? alerts.map(alert => `
+        <article class="attention-item ${esc(alert.severity || "info")}">
+          <div class="attention-title">${esc(alert.title || "Dashboard signal")}</div>
+          <div class="attention-detail">${esc(alert.detail || "")}</div>
+          ${alert.action ? `<div class="attention-action">Next: ${esc(alert.action)}</div>` : ""}
+        </article>`).join("") : '<div class="muted">No active signals in this window. Continue validating savings with explicit optimizer measurements.</div>';
+    }
+
     function renderDetect(j) {
       state.detect = j;
       for (const name of ["headroom", "pxpipe", "squeezr"]) {
@@ -965,7 +997,7 @@
       refreshInFlight = true;
       try {
         const bucket = ["7d", "30d"].includes(dashboardWindow) ? "1h" : "1m";
-        const [status, capture, detect, summary, efficiency, efficiencySeries, chains, modelQuality, operations, series, sessions, history, compare] = await Promise.all([
+        const [status, capture, detect, summary, efficiency, efficiencySeries, chains, modelQuality, operations, attention, series, sessions, history, compare] = await Promise.all([
           getJSON("/api/status"),
           getJSON("/api/capture"),
           getJSON("/api/tool/detect"),
@@ -975,6 +1007,7 @@
           getJSON(`/api/metrics/chains?window=${dashboardWindow}`),
           getJSON(`/api/metrics/model-quality?window=${dashboardWindow}`),
           getJSON("/api/metrics/operations?limit=10"),
+          getJSON(`/api/metrics/attention?window=${dashboardWindow}`),
           getJSON(`/api/metrics/timeseries?window=${dashboardWindow}&bucket=${bucket}`),
           getJSON(`/api/metrics/sessions?window=${dashboardWindow}&limit=50`),
           getJSON(historyUrl()),
@@ -990,6 +1023,7 @@
         renderChains(chains);
         renderModelQuality(modelQuality);
         renderOperations(operations);
+        renderAttention(attention);
         $("timeseries-window").textContent = `last ${dashboardWindow}`;
         renderSessions(sessions);
         renderHistory(history, true);

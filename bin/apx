@@ -944,6 +944,28 @@ No optimizer is installed, upgraded, or removed by this command.
 EOF
 }
 
+optimizer_command() {
+  case "${1:-sources}" in
+    sources|status) shift || true; [[ $# -eq 0 ]] || { echo "usage: apx optimizer [sources]" >&2; return 2; }; optimizer_sources ;;
+    reconcile)
+      shift || true
+      local name="${1:-}" version="${2:-}" dry_run="${3:-}"
+      [[ "$dry_run" == "--dry-run" && -n "$name" && -n "$version" && $# -eq 3 ]] || {
+        echo "usage: apx optimizer reconcile <headroom|pxpipe|squeezr> <version> --dry-run" >&2; return 2;
+      }
+      load_config
+      local ownership; ownership="$(optimizer_ownership "$name")"
+      case "$name" in
+        headroom) [[ "$ownership" == "apx-managed" ]] || { echo "refusing: headroom ownership is $ownership" >&2; return 1; }; echo "dry run: would reconcile PyPI headroom-ai==$version" ;;
+        pxpipe|squeezr) echo "refusing: $name ownership is $ownership; managed package reconciliation is not enabled yet" >&2; return 1 ;;
+        *) echo "unknown optimizer: $name" >&2; return 2 ;;
+      esac
+      ;;
+    help|-h|--help) echo "usage: apx optimizer [sources|reconcile <headroom|pxpipe|squeezr> <version> --dry-run]" ;;
+    *) echo "unknown optimizer action: $1" >&2; return 2 ;;
+  esac
+}
+
 safe_home_child() {
   local path="$1" real_home real_path
   case "$path" in
@@ -3580,6 +3602,7 @@ ZSH
     chain) _describe -t chain 'apx chain' chain_subs && _describe -t services 'services' services ;;
     target) _describe -t target 'apx target' target_subs ;;
     port) _describe -t port 'apx port' port_subs && _describe -t port-services 'services' port_services ;;
+    optimizer) _values 'optimizer action' 'sources' 'status' 'reconcile' 'headroom' 'pxpipe' 'squeezr' '--dry-run' ;;
     headroom) _values 'headroom action' 'settings' 'get' 'set' 'tool-search' 'code-aware' 'code-graph' 'on' 'off' '--no-restart' ;;
     pxpipe) _values 'pxpipe action' 'models' 'get' 'set' 'off' '--no-restart' ;;
     squeezr) _values 'squeezr action' 'bypass' 'get' 'on' 'off' ;;
@@ -3627,6 +3650,7 @@ FISH
       cat <<'FISH'
 complete -c apx -n "__fish_seen_subcommand_from completions" -a "bash zsh fish install uninstall"
 complete -c apx -n "__fish_seen_subcommand_from debug" -a "level get set info debug trace --no-restart"
+complete -c apx -n "__fish_seen_subcommand_from optimizer" -a "sources status reconcile headroom pxpipe squeezr --dry-run"
 complete -c apx -n "__fish_seen_subcommand_from headroom" -a "settings get set tool-search code-aware code-graph on off"
 complete -c apx -n "__fish_seen_subcommand_from headroom" -l no-restart
 complete -c apx -n "__fish_seen_subcommand_from pxpipe" -a "models get set off"
@@ -3770,6 +3794,7 @@ Commands:
   disable              Stop stack/gateway and remove ANTHROPIC_BASE_URL
   restart [--takeover] Stop then start
   status               Show current health and pids
+  optimizer            Show optimizer source/ownership status; dry-run reconcile planning
   optimizer            Show read-only optimizer source and ownership status
   mode [preset]        Show/set mode preset and sync Claude settings
   chain <sub>          Get/set the routing chain (get|set|clear|ls|preset)
@@ -3841,7 +3866,7 @@ case "$cmd" in
   disable) disable_stack ;;
   restart) restart_service "${1:-}" ;;
   status) status ;;
-  optimizer) optimizer_sources "$@" ;;
+  optimizer) optimizer_command "$@" ;;
   mode) set_mode "${@:-current}" ;;
   chain) chain_cli "$@" ;;
   target) target_cli "$@" ;;

@@ -240,6 +240,19 @@ manifest_set() {
   mv "$tmp" "$RUNTIME_INSTALL_MANIFEST"
 }
 
+manifest_get() {
+  local key="$1"
+  [[ -f "$RUNTIME_INSTALL_MANIFEST" ]] || return 1
+  awk -F= -v key="$key" '
+    $1 == key {
+      sub(/^[^=]*=/, "")
+      print
+      found = 1
+    }
+    END { exit found ? 0 : 1 }
+  ' "$RUNTIME_INSTALL_MANIFEST"
+}
+
 npm_cache_content_path() {
   local cache_dir="$1" integrity="$2"
   command -v python3 >/dev/null 2>&1 || return 1
@@ -284,22 +297,38 @@ install_deps() {
 
   have pipx || die "pipx is required after prerequisite installation"
 
-  local headroom_preexisting=0
+  local headroom_preexisting=0 headroom_ownership=""
   if have headroom || pipx_has_package headroom-ai; then
     headroom_preexisting=1
   fi
-  if ! have headroom && ! pipx_has_package headroom-ai; then
+  # An older manifest that explicitly recorded the package is evidence that
+  # apx owns it. Everything else discovered on a user's machine is external
+  # by default and must not be changed by an apx install/upgrade.
+  headroom_ownership="$(manifest_get HEADROOM_OWNERSHIP 2>/dev/null || true)"
+  if [[ "$headroom_ownership" != "apx-managed" && "$headroom_ownership" != "external" ]]; then
+    if [[ "$(manifest_get HEADROOM_AI_INSTALLED 2>/dev/null || true)" == "1" ]]; then
+      headroom_ownership="apx-managed"
+    elif (( headroom_preexisting )); then
+      headroom_ownership="external"
+    else
+      headroom_ownership="apx-managed"
+    fi
+  fi
+  if ! have headroom && ! pipx_has_package headroom-ai && [[ "$headroom_ownership" == "apx-managed" ]]; then
     run_step "install headroom-ai proxy" pipx install "headroom-ai[proxy]"
     if (( headroom_preexisting == 0 )) && pipx_has_package headroom-ai; then
       manifest_set HEADROOM_AI_INSTALLED 1
     fi
-  elif ! have headroom; then
+  elif ! have headroom && [[ "$headroom_ownership" == "apx-managed" ]]; then
     log "headroom-ai already installed via pipx; run 'pipx ensurepath' if headroom is not on PATH"
+  elif ! have headroom; then
+    warn "externally managed Headroom is not available; install or configure it outside apx"
   else
     log "Headroom already available: $(command -v headroom)"
   fi
+  manifest_set HEADROOM_OWNERSHIP "$headroom_ownership"
 
-  if have pipx; then
+  if [[ "$headroom_ownership" == "apx-managed" ]] && have pipx; then
     run_step "ensure headroom-ai code extras" pipx runpip headroom-ai install "headroom-ai[code]"
     if ! have ast-grep && ! have sg; then
       run_step "install ast-grep-cli into headroom environment" pipx inject headroom-ai ast-grep-cli --include-apps --force
@@ -307,17 +336,21 @@ install_deps() {
     else
       log "ast-grep already available"
     fi
+  elif [[ "$headroom_ownership" == "external" ]]; then
+    log "Headroom is externally managed; skipping pipx extras and injections"
   fi
 
-  if have headroom; then
+  if [[ "$headroom_ownership" == "apx-managed" ]] && have headroom; then
     run_step "install Headroom helper tools" headroom tools install --tool difft --tool scc
     if [[ "$(uname -s)" == "Darwin" ]]; then
       manifest_set HEADROOM_TOOLS_CACHE_DIR "$HOME/Library/Caches/headroom/bin"
     else
       manifest_set HEADROOM_TOOLS_CACHE_DIR "${XDG_CACHE_HOME:-$HOME/.cache}/headroom/bin"
     fi
-  else
+  elif [[ "$headroom_ownership" == "apx-managed" ]]; then
     warn "headroom command is not on PATH yet; restart your shell or rerun after pipx ensurepath"
+  else
+    log "Headroom helper tools are externally managed; skipping installation"
   fi
 
   if have npm; then

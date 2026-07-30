@@ -514,9 +514,16 @@ jobs:
       - name: Build focused dashboard
         working-directory: dashboard
         run: |
-          npm ci
+          if grep -qiE 'artifactory|npm-registry-remote' package-lock.json; then
+            echo "dashboard lockfile contains a private npm registry URL" >&2
+            exit 1
+          fi
+          npm ci --registry=https://registry.npmjs.org/
           npm run check
           npm run build
+
+      - name: Verify committed dashboard assets are current
+        run: git diff --exit-code -- share/dashboard
 
       - name: Run Chromium dashboard checks
         working-directory: dashboard
@@ -567,6 +574,8 @@ jobs:
           test -x "$extract_dir/bin/apx-gateway"
           test -x "$extract_dir/bin/apx-squeezr"
           test -f "$extract_dir/share/dashboard.html"
+          test -s "$extract_dir/share/dashboard/app.js"
+          test -s "$extract_dir/share/dashboard/app.css"
           test -f "$extract_dir/config/config.env"
           test -x "$extract_dir/install.sh"
           test -f "$extract_dir/VERSION"
@@ -667,6 +676,8 @@ jobs:
           test -L "$FAKE_HOME/.local/share/apx/current"
           test -f "$FAKE_HOME/.config/apx/install.mode"
           test -f "$FAKE_HOME/.config/apx/config.env"
+          test -s "$FAKE_HOME/.local/share/apx/current/share/dashboard/app.js"
+          test -s "$FAKE_HOME/.local/share/apx/current/share/dashboard/app.css"
           test "$(cat "$FAKE_HOME/.config/apx/install.mode")" = "release"
           # apx CLI works via the ~/.local/bin symlink
           HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/apx" version

@@ -73,6 +73,14 @@ METRICS_BACKFILL = os.environ.get("APX_METRICS_BACKFILL", "1") == "1"
 # object or array of objects describing optimizer work for the request. It is
 # consumed by the gateway and never relayed to clients.
 OPTIMIZER_METRICS_HEADER = "x-apx-optimizer-metrics"
+_MEASURED_EVIDENCE_SQL = (
+    "oa.savings_confidence = 'measured' "
+    "AND oa.input_tokens_before IS NOT NULL "
+    "AND oa.input_tokens_after IS NOT NULL "
+    "AND oa.tokens_saved IS NOT NULL "
+    "AND oa.input_tokens_before >= oa.input_tokens_after "
+    "AND oa.tokens_saved = oa.input_tokens_before - oa.input_tokens_after"
+)
 
 DASHBOARD_STATIC_DIR = os.environ.get("APX_DASHBOARD_STATIC_DIR", "").strip()
 
@@ -584,6 +592,18 @@ class MetricsStore:
             before = attempt.get("input_tokens_before")
             after = attempt.get("input_tokens_after")
             saved = attempt.get("tokens_saved")
+            measured_delta = (
+                before - after
+                if isinstance(before, int) and not isinstance(before, bool)
+                and isinstance(after, int) and not isinstance(after, bool)
+                and before >= after >= 0
+                else None
+            )
+            if confidence == "measured":
+                if measured_delta is None or (saved is not None and saved != measured_delta):
+                    confidence = "unavailable"
+                else:
+                    saved = measured_delta
             if confidence == "unavailable":
                 before = after = saved = None
             raw = attempt.get("raw_metrics")
@@ -1173,8 +1193,14 @@ def _optimizer_attempts_from_headers(headers: Any) -> list[dict[str, Any]]:
             before = integer(record.get("input_tokens_before"))
             after = integer(record.get("input_tokens_after"))
             saved = integer(record.get("tokens_saved"))
-            if saved is None and before is not None and after is not None and before >= after:
-                saved = before - after
+            measured_delta = before - after if before is not None and after is not None and before >= after else None
+            if confidence == "measured":
+                if measured_delta is None or (saved is not None and saved != measured_delta):
+                    confidence = "unavailable"
+                else:
+                    saved = measured_delta
+            elif confidence == "estimated" and saved is None and measured_delta is not None:
+                saved = measured_delta
             if confidence == "unavailable" or saved is None:
                 confidence = "unavailable"
                 before = after = saved = None
@@ -1634,10 +1660,11 @@ def _api_metrics_efficiency(query: dict[str, list[str]]) -> dict[str, Any]:
     observed = observed_rows[0] if observed_rows else {}
     attempts = METRICS.query(
         "SELECT oa.optimizer, COUNT(*) AS attempts, SUM(CASE WHEN oa.applied = 1 THEN 1 ELSE 0 END) AS applied, "
-        "SUM(CASE WHEN oa.savings_confidence = 'measured' THEN 1 ELSE 0 END) AS measured_attempts, "
+        f"SUM(CASE WHEN {_MEASURED_EVIDENCE_SQL} THEN 1 ELSE 0 END) AS measured_attempts, "
         "SUM(CASE WHEN oa.savings_confidence = 'estimated' THEN 1 ELSE 0 END) AS estimated_attempts, "
-        "SUM(CASE WHEN oa.savings_confidence = 'unavailable' THEN 1 ELSE 0 END) AS unavailable_attempts, "
-        "SUM(CASE WHEN oa.savings_confidence = 'measured' THEN oa.tokens_saved ELSE 0 END) AS measured_tokens_saved, "
+        f"SUM(CASE WHEN oa.savings_confidence NOT IN ('measured', 'estimated') "
+        f"OR (oa.savings_confidence = 'measured' AND NOT ({_MEASURED_EVIDENCE_SQL})) THEN 1 ELSE 0 END) AS unavailable_attempts, "
+        f"SUM(CASE WHEN {_MEASURED_EVIDENCE_SQL} THEN oa.tokens_saved ELSE 0 END) AS measured_tokens_saved, "
         "SUM(CASE WHEN oa.savings_confidence = 'estimated' THEN oa.tokens_saved ELSE 0 END) AS estimated_tokens_saved, "
         "AVG(oa.optimizer_latency_ms) AS optimizer_latency_avg_ms "
         "FROM optimizer_attempts oa JOIN requests r ON r.id = oa.request_id "
@@ -1676,7 +1703,8 @@ def _api_metrics_efficiency_timeseries(query: dict[str, list[str]]) -> dict[str,
     if not METRICS.enabled:
         return {"window": window, "bucket": bucket, "since_ts": since, "durable": False, "series": []}
     rows = METRICS.query(
-        "SELECT r.ts, oa.savings_confidence, oa.tokens_saved FROM optimizer_attempts oa "
+        "SELECT r.ts, oa.savings_confidence, oa.tokens_saved, "
+        "oa.input_tokens_before, oa.input_tokens_after FROM optimizer_attempts oa "
         "JOIN requests r ON r.id = oa.request_id WHERE r.ts >= ? ORDER BY r.ts ASC",
         (since,),
     )
@@ -1685,7 +1713,16 @@ def _api_metrics_efficiency_timeseries(query: dict[str, list[str]]) -> dict[str,
         bucket_ts = int(float(row["ts"] or 0) // bucket_seconds) * bucket_seconds
         entry = grouped.setdefault(bucket_ts, {"measured_tokens_saved": 0, "estimated_tokens_saved": 0})
         saved = int(row["tokens_saved"] or 0)
-        if row["savings_confidence"] == "measured":
+        before = row.get("input_tokens_before")
+        after = row.get("input_tokens_after")
+        has_measured_evidence = (
+            row["savings_confidence"] == "measured"
+            and before is not None
+            and after is not None
+            and before >= after
+            and row.get("tokens_saved") == before - after
+        )
+        if has_measured_evidence:
             entry["measured_tokens_saved"] += saved
         elif row["savings_confidence"] == "estimated":
             entry["estimated_tokens_saved"] += saved
@@ -1960,7 +1997,7 @@ def _api_metrics_attention(query: dict[str, list[str]]) -> dict[str, Any]:
             "severity": "warning",
             "title": f"{service} health degraded in this window",
             "detail": f"{count} transition(s) into a failed health state were recorded.",
-            "action": "Review the Operations event log and service logs for the affected interval.",
+            "action": "Review apx service logs for the affected interval.",
         })
 
     rank = {"critical": 0, "warning": 1, "info": 2}
@@ -2069,10 +2106,11 @@ def _api_metrics_sessions(query: dict[str, list[str]]) -> dict[str, Any]:
     if METRICS.enabled and rows:
         efficiency_rows = METRICS.query(
             "SELECT r.session_id, COUNT(oa.id) AS attempts, "
-            "SUM(CASE WHEN oa.savings_confidence = 'measured' THEN oa.tokens_saved ELSE 0 END) AS measured_tokens_saved, "
+            f"SUM(CASE WHEN {_MEASURED_EVIDENCE_SQL} THEN oa.tokens_saved ELSE 0 END) AS measured_tokens_saved, "
             "SUM(CASE WHEN oa.savings_confidence = 'estimated' THEN oa.tokens_saved ELSE 0 END) AS estimated_tokens_saved, "
-            "SUM(CASE WHEN oa.savings_confidence = 'measured' THEN 1 ELSE 0 END) AS measured_attempts, "
-            "SUM(CASE WHEN oa.savings_confidence = 'unavailable' THEN 1 ELSE 0 END) AS unavailable_attempts "
+            f"SUM(CASE WHEN {_MEASURED_EVIDENCE_SQL} THEN 1 ELSE 0 END) AS measured_attempts, "
+            f"SUM(CASE WHEN oa.savings_confidence NOT IN ('measured', 'estimated') "
+            f"OR (oa.savings_confidence = 'measured' AND NOT ({_MEASURED_EVIDENCE_SQL})) THEN 1 ELSE 0 END) AS unavailable_attempts "
             "FROM requests r JOIN optimizer_attempts oa ON oa.request_id = r.id "
             "WHERE r.ts >= ? AND r.session_id != '' GROUP BY r.session_id",
             (since,),

@@ -13,7 +13,14 @@ const fixture = {
     totals: { requests: 12, ok: 12, warn_4xx: 0, err_5xx: 0, tokens_in: 1200, tokens_out: 300 },
     latency_ms: { p95: 42 },
   },
-  attention: { alerts: [] },
+  attention: {
+    alerts: [
+      { id: "one", severity: "warning", title: "Optimizer unavailable", detail: "Headroom could not be reached.", action: "Run apx status." },
+      { id: "two", severity: "info", title: "Savings unavailable", detail: "No verified attempt was reported.", action: "Check optimizer telemetry." },
+      { id: "three", severity: "info", title: "Update available", detail: "A newer optimizer release is cached.", action: "Run apx optimizer latest." },
+      { id: "four", severity: "critical", title: "Repeated failures", detail: "Requests failed in this window.", action: "Review apx service logs." },
+    ],
+  },
   timeseries: { series: [{ ts: 1_700_000_000, tokens_in: 1200, tokens_out: 300 }] },
   efficiency: {
     durable: true,
@@ -64,11 +71,21 @@ test("renders a focused, responsive token-efficiency overview", async ({ page })
   await expect(page.getByText("Verified tokens saved")).toBeVisible();
   await expect(page.getByText("Tokens processed")).toBeVisible();
   await expect(page.getByText("Savings coverage")).toBeVisible();
-  await expect(page.getByText("Gateway health")).toBeVisible();
+  await expect(page.getByText("Request health")).toBeVisible();
   await expect(page.getByText("Advanced operational details")).toHaveCount(0);
   await expect(page.getByText("300", { exact: true })).toBeVisible();
   await expect(page.locator("main")).toBeVisible();
   await expect(page.locator("label[for='window-select']")).toBeVisible();
+  await expect(page.getByRole("img", { name: /Token flow over 1h/ })).toBeVisible();
+  await expect(page.getByText("Repeated failures")).toHaveCount(0);
+  await page.getByRole("button", { name: "Show 1 more signal" }).click();
+  await expect(page.getByText("Repeated failures")).toBeVisible();
+
+  await page.locator("#window-select").selectOption("6h");
+  await expect(page.locator("#window-select")).toHaveValue("6h");
+  await page.reload();
+  await expect(page.locator("#window-select")).toHaveValue("6h");
+  await expect(page.getByRole("img", { name: /Token flow over 6h/ })).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByText("Verified tokens saved")).toBeVisible();
@@ -81,4 +98,15 @@ test("renders a focused, responsive token-efficiency overview", async ({ page })
   }));
   expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewport);
   expect(layout.overflow).toEqual([]);
+});
+
+test("labels unavailable request data without claiming the gateway is healthy", async ({ page }) => {
+  await page.route("**/api/metrics/summary?**", (route) => route.fulfill({
+    status: 503,
+    contentType: "application/json",
+    body: JSON.stringify({ error: "fixture unavailable" }),
+  }));
+  await page.goto(baseURL);
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
 });

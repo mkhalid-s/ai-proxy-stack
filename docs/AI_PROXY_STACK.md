@@ -137,7 +137,7 @@ headroom-ai[proxy]
 headroom-ai[code]
 ast-grep-cli
 Headroom helper tools: difft, scc
-pxpipe-proxy@0.8.0 npm cache
+pxpipe-proxy@0.11.1 npm cache
 squeezr-ai npm cache
 ```
 
@@ -155,6 +155,8 @@ Source files in this repo:
 ./bin/apx-squeezr
 ./config/config.env
 ./share/dashboard.html
+./share/dashboard/app.js
+./share/dashboard/app.css
 ./docs/AI_PROXY_STACK.md
 ```
 
@@ -168,6 +170,8 @@ Runtime mirrors:
 ~/.config/apx/service.backend
 ~/.local/state/apx/
 ~/.local/share/apx/dashboard.html
+~/.local/share/apx/dashboard/app.js
+~/.local/share/apx/dashboard/app.css
 ~/Library/LaunchAgents/io.github.apx.plist             # macOS
 ~/.config/systemd/user/io.github.apx.service           # Linux systemd-user
 $XDG_RUNTIME_DIR/apx/                                  # ephemeral Linux PID/lock state
@@ -213,8 +217,8 @@ HEADROOM_TARGET_API_URL="https://api.anthropic.com"
 GATEWAY_CMD="$HOME/.local/bin/apx-gateway"
 SQUEEZR_CMD="$HOME/.local/bin/apx-squeezr"
 SQUEEZR_PACKAGE_SPEC="squeezr-ai@1.99.2"
-PXPIPE_CMD="npx -y pxpipe-proxy@0.8.0"
-PXPIPE_MODELS="claude-fable-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5"
+PXPIPE_CMD="npx -y pxpipe-proxy@0.11.1"
+PXPIPE_MODELS="claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5"
 HEADROOM_CMD="headroom proxy"
 
 WORKDIR="${HOME}"
@@ -282,7 +286,7 @@ pxpipe only converts requests to image blocks for model bases listed in `PXPIPE_
 The pxpipe dashboard chips are runtime-only live overrides. They are useful for quick experiments, but they reset when pxpipe restarts. Keep persistent model policy in `~/.config/apx/config.env`:
 
 ```bash
-PXPIPE_MODELS="claude-fable-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5"
+PXPIPE_MODELS="claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5"
 ```
 
 Use `PXPIPE_MODELS=off` to disable image conversion while leaving pxpipe running as a pass-through logging/dashboard proxy. pxpipe has no wildcard mode; add future model bases explicitly.

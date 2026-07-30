@@ -54,10 +54,21 @@ copy() {
   cp "$REPO_ROOT/$src" "$STAGING/$dst"
 }
 
+copy_tree() {
+  local src="$1" dst="$2"
+  [[ -d "$REPO_ROOT/$src" ]] || {
+    echo "missing runtime directory at $REPO_ROOT/$src" >&2
+    exit 1
+  }
+  mkdir -p "$STAGING/$dst"
+  cp -R "$REPO_ROOT/$src/." "$STAGING/$dst/"
+}
+
 copy bin/apx                bin/apx
 copy bin/apx-gateway        bin/apx-gateway
 copy bin/apx-squeezr        bin/apx-squeezr
 copy share/dashboard.html   share/dashboard.html
+copy_tree share/dashboard   share/dashboard
 copy config/config.env      config/config.env
 copy install.sh             install.sh
 copy VERSION                VERSION

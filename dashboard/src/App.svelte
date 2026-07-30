@@ -13,6 +13,7 @@
   /** @type {any[]} */ let savingsSeries = [];
   let loading = true;
   let error = "";
+  let showAllSignals = false;
   /** @type {HTMLElement | undefined} */ let tokenTarget;
   /** @type {HTMLElement | undefined} */ let savingsTarget;
   /** @type {uPlot | undefined} */ let tokenPlot;
@@ -37,8 +38,25 @@
 
   function currentWindow() {
     const selector = /** @type {HTMLSelectElement | null} */ (document.querySelector("#window-select"));
-    const value = selector?.value || localStorage.getItem("apx.dashboard.window") || "1h";
+    const value = selector?.value || windowValue;
     return WINDOWS.has(value) ? value : "1h";
+  }
+
+  function savedWindow() {
+    try {
+      return localStorage.getItem("apx.dashboard.window") || "";
+    } catch {
+      return "";
+    }
+  }
+
+  /** @param {string} value */
+  function saveWindow(value) {
+    try {
+      localStorage.setItem("apx.dashboard.window", value);
+    } catch {
+      // Browser storage is optional; the selected window still works for this page.
+    }
   }
 
   /** @param {HTMLElement} target @param {any[]} plotSeries */
@@ -105,9 +123,17 @@
   }
 
   onMount(() => {
+    const preferredWindow = savedWindow();
+    if (WINDOWS.has(preferredWindow)) windowValue = preferredWindow;
+    const selector = /** @type {HTMLSelectElement | null} */ (document.querySelector("#window-select"));
+    if (selector) selector.value = windowValue;
     refresh();
-    const selector = document.querySelector("#window-select");
-    const onWindowChange = () => refresh();
+    const onWindowChange = () => {
+      windowValue = currentWindow();
+      saveWindow(windowValue);
+      showAllSignals = false;
+      refresh();
+    };
     selector?.addEventListener("change", onWindowChange);
     const interval = window.setInterval(refresh, 10_000);
     resizeObserver = new ResizeObserver(() => syncPlots());
@@ -134,6 +160,15 @@
   $: measuredAttempts = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.measured_attempts || 0), 0);
   $: optimizerAttempts = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.attempts || 0), 0);
   $: failures = Number(summary.totals?.err_5xx || 0) + Number(summary.totals?.warn_4xx || 0);
+  $: hasRequestData = !!summary.totals;
+  $: requestHealth = error
+    ? hasRequestData ? "Stale data" : "Unavailable"
+    : !hasRequestData && loading
+      ? "Loading"
+      : failures
+        ? `${number(failures)} issue${failures === 1 ? "" : "s"}`
+        : "Healthy";
+  $: visibleAlerts = showAllSignals ? (attention.alerts || []) : (attention.alerts || []).slice(0, 3);
 
 </script>
 
@@ -143,25 +178,30 @@
       <p class="eyebrow">LeanRelay · token efficiency</p>
       <h2>What needs your attention</h2>
     </div>
-    <span class:ok={!loading && !error} class:warn={loading} class:fail={!!error} class="status">
+    <span aria-live="polite" class:ok={!loading && !error} class:warn={loading} class:fail={!!error} class="status">
       {error ? "retrying" : loading ? "refreshing" : `last ${windowValue}`}
     </span>
   </div>
 
   {#if error}
-    <div class="error">{error}. Retrying automatically; use <code>apx status</code> if the problem persists.</div>
+    <div class="error" role="alert">{error}. Retrying automatically; use <code>apx status</code> if the problem persists.</div>
   {/if}
 
   <div class="attention">
     <div class="attention-heading"><h3>Needs attention</h3><span class:ok={!attention.alerts?.length} class:warn={attention.alerts?.some((alert) => alert.severity === "warning")} class:fail={attention.alerts?.some((alert) => alert.severity === "critical")} class="status">{attention.alerts?.length || 0} signals</span></div>
     {#if attention.alerts?.length}
       <div class="attention-list">
-        {#each attention.alerts.slice(0, 3) as alert (alert.id)}
+        {#each visibleAlerts as alert (alert.id)}
           <article class:critical={alert.severity === "critical"} class:warning={alert.severity === "warning"} class="signal">
             <strong>{alert.title}</strong><small>{alert.detail}</small><em>Next: {alert.action}</em>
           </article>
         {/each}
       </div>
+      {#if attention.alerts.length > 3}
+        <button class="signals-toggle" type="button" aria-expanded={showAllSignals} onclick={() => showAllSignals = !showAllSignals}>
+          {showAllSignals ? "Show fewer signals" : `Show ${attention.alerts.length - 3} more signal${attention.alerts.length - 3 === 1 ? "" : "s"}`}
+        </button>
+      {/if}
     {:else}
       <p class="clear">No active signals in this window.</p>
     {/if}
@@ -171,12 +211,12 @@
     <article><span>Tokens processed</span><strong>{number(totalTokens)}</strong><small>{number(observed.tokens_in)} input · {number(observed.tokens_out)} output</small></article>
     <article class="token-card"><span>Verified tokens saved</span><strong>{number(verifiedSaved)}</strong><small>Explicit pre/post optimizer measurements only</small></article>
     <article><span>Savings coverage</span><strong>{percentage(measuredAttempts, optimizerAttempts)}</strong><small>{number(measuredAttempts)} of {number(optimizerAttempts)} optimizer attempts verified</small></article>
-    <article><span>Gateway health</span><strong class:healthy={failures === 0}>{failures ? `${number(failures)} issue${failures === 1 ? "" : "s"}` : "Healthy"}</strong><small>{number(summary.totals?.requests)} requests · p95 {ms(summary.latency_ms?.p95)}</small></article>
+    <article><span>Request health</span><strong class:healthy={hasRequestData && failures === 0 && !error}>{requestHealth}</strong><small>{number(summary.totals?.requests)} requests · p95 {ms(summary.latency_ms?.p95)}</small></article>
   </div>
 
   <div class="charts">
-    <article class="chart"><div class="chart-heading"><div><h3>Token flow</h3><small>Observed input and output tokens</small></div><span class="status">{windowValue}</span></div><div class="plot" bind:this={tokenTarget}></div></article>
-    <article class="chart"><div class="chart-heading"><div><h3>Savings evidence</h3><small>Verified savings is distinct from estimates</small></div><span class="status">explicit</span></div><div class="plot" bind:this={savingsTarget}></div></article>
+    <article class="chart"><div class="chart-heading"><div><h3>Token flow</h3><small>Observed input and output tokens</small></div><span class="status">{windowValue}</span></div><div class="plot" role="img" aria-label={`Token flow over ${windowValue}: ${number(observed.tokens_in)} input and ${number(observed.tokens_out)} output tokens.`} bind:this={tokenTarget}></div></article>
+    <article class="chart"><div class="chart-heading"><div><h3>Savings evidence</h3><small>Verified savings is distinct from estimates</small></div><span class="status">explicit</span></div><div class="plot" role="img" aria-label={`Savings over ${windowValue}: ${number(verifiedSaved)} verified tokens saved.`} bind:this={savingsTarget}></div></article>
   </div>
 
   <div class="optimizer-grid">

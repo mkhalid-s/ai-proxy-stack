@@ -119,7 +119,7 @@ load_config() {
   : "${APX_CAPTURE_FULL_ACK:=}"
   : "${APX_CAPTURE_BODY_CAP:=65536}"
   : "${APX_REDACT_KEYS:=}"
-  : "${APX_METRICS_DB:=$STATE_DIR/metrics.db}"
+  : "${APX_METRICS_DB=$STATE_DIR/metrics.db}"
   : "${APX_METRICS_RETENTION_DAYS:=30}"
   : "${APX_METRICS_BACKFILL:=1}"
   : "${APX_MAX_REQUEST_BYTES:=67108864}"
@@ -996,9 +996,10 @@ EOF
 }
 
 maybe_check_optimizer_updates() {
-  local command="$1" stale
+  local command="$1" subcommand="${2:-}" stale
   [[ "${APX_OPTIMIZER_AUTO_CHECK:-1}" == "1" ]] || return 0
   case "$command" in help|-h|--help|completions|supervisor|run|optimizer) return 0 ;; esac
+  [[ "$command" == "config" && "${subcommand:-advise}" == "advise" ]] && return 0
   command -v python3 >/dev/null 2>&1 || return 0
   stale="$(python3 - "$OPTIMIZER_UPDATE_CACHE_FILE" <<'PY'
 import os
@@ -1066,12 +1067,12 @@ advisor_apply_safe() {
   load_config
   case "$id" in
     metrics-disabled)
-      if [[ "$APX_METRICS_ENABLED" == "1" ]]; then
+      if ! durable_metrics_disabled "$APX_METRICS_DB"; then
         echo "no change: durable metrics are already enabled"
         return 0
       fi
-      set_config_var APX_METRICS_ENABLED 1
-      echo "applied: APX_METRICS_ENABLED=1"
+      set_config_var APX_METRICS_DB "$(config_quote "$STATE_DIR/metrics.db")"
+      echo "applied: APX_METRICS_DB=$STATE_DIR/metrics.db"
       echo "not restarted; run: apx restart"
       ;;
     pxpipe-models-missing-opus-5)
@@ -1112,17 +1113,40 @@ advisor_json_escape() {
   printf '%s' "$value"
 }
 
+durable_metrics_disabled() {
+  local value lower
+  value="${1:-}"
+  lower="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+  [[ -z "$lower" || "$lower" =~ ^(off|0|false|none|disabled)$ ]]
+}
+
+is_loopback_http_url() {
+  local url="$1" authority host
+  [[ "$url" =~ ^http:// ]] || return 1
+  authority="${url#http://}"
+  authority="${authority%%[/?#]*}"
+  authority="${authority##*@}"
+  if [[ "$authority" == \[* ]]; then
+    host="${authority#\[}"
+    host="${host%%]*}"
+  else
+    host="${authority%%:*}"
+  fi
+  host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+  [[ "$host" == "localhost" || "$host" == "::1" || "$host" == "127.0.0.1" ]]
+}
+
 # Fields: ID, version, severity, category, title, impact, remediation.
 advisor_rules() {
   load_config
   local model_remediation
 
-  if [[ "$APX_METRICS_ENABLED" != "1" ]]; then
+  if durable_metrics_disabled "$APX_METRICS_DB"; then
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       metrics-disabled 1 recommended observability \
       "Enable durable token metrics" \
       "The dashboard cannot verify token consumption or savings while metrics are disabled." \
-      "Set APX_METRICS_ENABLED=1 in $CONFIG_FILE, then run: apx restart"
+      "Set APX_METRICS_DB=$STATE_DIR/metrics.db in $CONFIG_FILE, then run: apx restart"
   fi
   if [[ "$PXPIPE_ENABLED" == "1" && "$PXPIPE_MODELS" != "off" && ",${PXPIPE_MODELS}," != *",claude-opus-5,"* ]]; then
     model_remediation="$PXPIPE_MODELS,claude-opus-5"
@@ -1139,7 +1163,7 @@ advisor_rules() {
       "The gateway is not bound to loopback and the dashboard has no access token." \
       "Set a strong APX_DASHBOARD_TOKEN in $CONFIG_FILE, then run: apx restart"
   fi
-  if [[ "$APX_TARGET_API_URL" =~ ^http:// ]] && [[ "$APX_TARGET_API_URL" != http://127.0.0.1* && "$APX_TARGET_API_URL" != http://localhost* && "$APX_TARGET_API_URL" != http://\[::1\]* ]]; then
+  if [[ "$APX_TARGET_API_URL" =~ ^http:// ]] && ! is_loopback_http_url "$APX_TARGET_API_URL"; then
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       insecure-upstream 1 warning security \
       "Use HTTPS for the upstream API" \
@@ -1220,7 +1244,7 @@ config_advise() {
   [[ -z "$apply_id" ]] || { advisor_apply_safe "$apply_id"; return $?; }
 
   local id version severity category title impact remediation dismissed emitted=0 first=1
-  if [[ "$json" == "1" ]]; then printf '[\n'; else echo "configuration advisor (local, read-only)"; fi
+  if [[ "$json" == "1" ]]; then printf '[\n'; else echo "configuration advisor (local, read-only by default)"; fi
   while IFS=$'\t' read -r id version severity category title impact remediation; do
     [[ -n "$id" ]] || continue
     dismissed=0
@@ -3955,7 +3979,6 @@ ZSH
   fi
   case "$words[2]" in
     mode) _describe -t modes 'apx mode' modes ;;
-    config) _values 'configuration action' 'advise' '--json' '--show-all' '--dismiss[advisory ID]' ;;
     chain) _describe -t chain 'apx chain' chain_subs && _describe -t services 'services' services ;;
     target) _describe -t target 'apx target' target_subs ;;
     port) _describe -t port 'apx port' port_subs && _describe -t port-services 'services' port_services ;;
@@ -4173,7 +4196,7 @@ Commands:
   support-bundle       Create a redacted metadata/log bundle for support
   debug level <sub>    Get/set APX_LOG_LEVEL (info|debug|trace)
   urls                 Print dashboard, health, and stats URLs
-  dashboard [--open]   Print URLs; with --open, open the pxpipe dashboard
+  dashboard [--open]   Print URLs; with --open, open the unified apx dashboard
   version              Print installed version and update channel
   check-updates        Compare installed version against latest available update
   update [--to REF]    Update to a newer version.
@@ -4219,7 +4242,7 @@ EOF
 
 cmd="${1:-status}"
 shift || true
-maybe_check_optimizer_updates "$cmd"
+maybe_check_optimizer_updates "$cmd" "${1:-}"
 case "$cmd" in
   supervisor) supervisor ;;
   run) supervisor ;;

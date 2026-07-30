@@ -29,5 +29,7 @@
 .overview .attention-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 10px; }
 .overview .signal { border-left: 4px solid var(--accent, #7aa2ff); background: var(--panel-2, #1f2430); }.overview .signal.warning { border-left-color: var(--warn, #f6ad55); }.overview .signal.critical { border-left-color: var(--fail, #f56565); }
 .overview .signal strong, .overview .signal small, .overview .signal em { display: block; }.overview .signal small, .overview .signal em { margin-top: 3px; }
+.overview .signals-toggle { margin-top: 10px; border: 1px solid var(--border, #2c3340); border-radius: 8px; padding: 6px 10px; background: var(--panel-2, #1f2430); color: var(--text, #e7eaf0); font: inherit; font-size: 12px; cursor: pointer; }
+.overview .signals-toggle:hover, .overview .signals-toggle:focus-visible { border-color: var(--accent, #7aa2ff); outline: none; }
 .overview .error { margin-top: 12px; color: var(--fail, #f56565); }
 @media (max-width: 560px) { .overview .heading { align-items: flex-start; flex-direction: column; }.overview .optimizer-grid { grid-template-columns: 1fr; }.overview .attention-list { grid-template-columns: 1fr; } }

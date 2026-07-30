@@ -79,6 +79,7 @@ WORKDIR="$HOME"
 HEALTH_INTERVAL_SECONDS=1
 STARTUP_TIMEOUT_SECONDS=60
 APX_SERVICE_BACKEND=nohup
+APX_METRICS_DB=OFF
 EOF
 
 export APX_CONFIG="$HOME/.config/apx/config.env"
@@ -158,11 +159,24 @@ if [[ "$advisor_json" != *'"id":"metrics-disabled"'* || "$advisor_json" != *'"sa
   exit 1
 fi
 "$APX" config advise --apply-safe metrics-disabled >/dev/null
-grep -q '^APX_METRICS_ENABLED=1$' "$APX_CONFIG"
+grep -q "^APX_METRICS_DB=\"$APX_STATE/metrics.db\"$" "$APX_CONFIG"
 if "$APX" config advise | grep -q 'Enable durable token metrics'; then
   echo "ERROR: applied metrics advisory was still active" >&2
   exit 1
 fi
+
+# HTTP loopback detection must compare the parsed hostname, not a URL prefix.
+"$APX" target set http://localhost.example.com --no-restart >/dev/null
+if ! "$APX" config advise --json | grep -q '"id":"insecure-upstream"'; then
+  echo "ERROR: config advisor treated a localhost-prefixed external hostname as loopback" >&2
+  exit 1
+fi
+"$APX" target set http://127.0.0.1:9999 --no-restart >/dev/null
+if "$APX" config advise --json | grep -q '"id":"insecure-upstream"'; then
+  echo "ERROR: config advisor warned about an exact loopback upstream" >&2
+  exit 1
+fi
+"$APX" target set https://api.anthropic.com --no-restart >/dev/null
 
 # The pxpipe action is safe only when the configured chain enables pxpipe and
 # image conversion is not intentionally disabled.
@@ -191,6 +205,13 @@ if [[ "$("$APX" optimizer pxpipe models get)" != "PXPIPE_MODELS=claude-fable-5,c
 fi
 if "$APX" config advise --json --dismiss metrics-disabled >/dev/null 2>&1; then
   echo "ERROR: config advisor accepted incompatible JSON/dismiss flags" >&2
+  exit 1
+fi
+
+zsh_completion="$("$APX" completions zsh)"
+if [[ "$(printf '%s\n' "$zsh_completion" | grep -c '^    config)')" != "1" ]] ||
+   [[ "$zsh_completion" != *"'--apply-safe[advisory ID]'"* ]]; then
+  echo "ERROR: zsh grouped config completion is missing or shadowed" >&2
   exit 1
 fi
 if "$APX" config advise --apply-safe dashboard-exposed-without-token >/dev/null 2>&1; then

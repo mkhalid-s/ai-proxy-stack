@@ -144,8 +144,8 @@ apx optimizer              # see source and ownership before changing an optimiz
 Open the dashboard, make a few normal model requests, then choose a time
 window. Start with **Needs Attention**: it tells you whether an optimizer is
 unreachable, telemetry is incomplete, or a traffic comparison needs review.
-Then use **Token Consumption & Verified Savings** and **Optimizer Measurement
-Coverage**. Do not treat an empty savings value as zero savings—it usually
+Then use **Tokens processed**, **Verified tokens saved**, and **Savings
+coverage**. Do not treat an empty savings value as zero savings—it usually
 means the optimizer did not supply per-request measurements.
 
 Use these safe controls for common changes; they persist through service
@@ -271,22 +271,15 @@ Existing runtime config is preserved on reinstall. The installer backs it up and
 
 ## Dashboard
 
-Open [http://127.0.0.1:8787/](http://127.0.0.1:8787/) after installing for a focused token-efficiency overview: attention signals, tokens processed, verified savings, measurement coverage, and gateway/optimizer health. The dashboard is served by `apx-gateway` as a bundled Svelte/uPlot module. Use `apx status`, `apx doctor`, logs, and support bundles for detailed operations instead of turning the dashboard into an operations console. Assets are revalidated after an apx upgrade so the overview does not remain stale.
+Open [http://127.0.0.1:8787/](http://127.0.0.1:8787/) after installing for a focused token-efficiency overview: attention signals, tokens processed, verified savings, measurement coverage, request health, and optimizer reachability. The dashboard is served by `apx-gateway` as a bundled Svelte/uPlot module. Use `apx status`, `apx doctor`, logs, and support bundles for detailed operations instead of turning the dashboard into an operations console. Assets are revalidated after an apx upgrade so the overview does not remain stale.
 
 It includes:
 
-- gateway KPIs: request volume, status buckets, p95 latency, first-byte latency, token totals, cache token totals, estimated cost, and tool-call counts
-- an at-a-glance overview with latency and request charts, persisted optimizer reachability, and verified/estimated/unavailable savings coverage
-- a **Needs Attention** feed for unavailable measurements, optimizer outages, health degradations, and observational chain regressions; it recommends investigation and never claims causal proof
-- current mode, chain diagram, apx version, and capture-level badge
-- a comparative tool view that normalizes Headroom, pxpipe, and Squeezr savings/cache/request data side-by-side
-- session rollups and drill-in details keyed by `X-Apx-Session-Id`
-- per-tool cards that appear only when the tool is enabled or reachable:
-  - Headroom: lifetime/session tokens saved, savings percentage, request failures, cache hits/entries
-  - pxpipe: saved input tokens, all-spend savings percentage, compressed-request coverage, A/B cost split, PNG throughput
-  - Squeezr: saved tokens, expand-rate quality signal, mode/circuit-breaker state, latency p95, technique breakdown
-- live log tail via SSE for each service (`supervisor`, `gateway`, `headroom`, `pxpipe`, `squeezr`)
-- native Headroom, pxpipe, and Squeezr dashboards load lazily from their own ports inside collapsed accordions when the gateway is loopback-only; the unified dashboard remains the remote-safe view, keeping third-party UI code off the authenticated apx dashboard origin
+- a **Needs Attention** feed with every active signal available through a compact expand control
+- tokens processed, explicit verified savings, measurement coverage, request status, and p95 latency
+- separate token-flow and verified-versus-estimated savings trends
+- persisted optimizer reachability and per-optimizer measurement confidence
+- a remembered browser time window without storing dashboard preferences in the metrics database
 
 JSON APIs for scripting:
 
@@ -328,21 +321,24 @@ array; apx consumes it internally and does not relay it to clients.
 Supported fields are `optimizer`, `applied`, `bypass_reason`, `technique`,
 `input_tokens_before`, `input_tokens_after`, `tokens_saved`,
 `savings_confidence` (`measured`, `estimated`, or `unavailable`), and
-`optimizer_latency_ms`. apx calculates a token delta only when the adapter
-explicitly provides both before/after counts; it never infers savings from
-aggregate traffic. Malformed or incomplete claims are retained as unavailable.
+`optimizer_latency_ms`. A `measured` claim requires both before/after counts.
+apx derives the delta and rejects an explicitly supplied `tokens_saved` value
+when it disagrees with that delta. It never infers savings from aggregate
+traffic. Malformed, incomplete, or inconsistent claims are retained as
+unavailable.
 
 Disable the dashboard entirely by setting `APX_DASHBOARD_ENABLED=0` in `~/.config/apx/config.env`. The gateway keeps proxying normally either way.
 
 ### Reading savings and restart-safe data
 
 For a first check, choose a time window, open **Needs Attention**, then inspect
-**Token Consumption & Verified Savings** and **Optimizer Measurement Coverage**.
+**Tokens processed**, **Verified tokens saved**, and **Savings coverage**.
 Only `measured` savings have explicit per-request before/after evidence;
 `estimated` values remain separate, and `unavailable` means apx has no basis
-to claim savings. Request history, sessions, optimizer attempts, health
-snapshots, and dashboard selections are stored locally in SQLite/JSONL and
-survive gateway restarts, subject to configured retention.
+to claim savings. Request history, sessions, optimizer attempts, and health
+snapshots are stored locally in SQLite/JSONL and survive gateway restarts,
+subject to configured retention. The selected time window is a browser-local
+preference and survives page reloads.
 
 When exposing the Gateway beyond loopback, LeanRelay keeps Headroom, pxpipe,
 and Squeezr on `APX_INTERNAL_HOST=127.0.0.1`. Native third-party dashboards
@@ -640,8 +636,8 @@ Further self-service guides: [dashboard metrics](docs/DASHBOARD_METRICS.md) and 
 
 ### Configuration advisor
 
-Run the local, read-only advisor after installation, an upgrade, or when the
-dashboard cannot explain token savings:
+Run the local, read-only-by-default advisor after installation, an upgrade, or
+when the dashboard cannot explain token savings:
 
 ```bash
 apx config advise
@@ -806,6 +802,8 @@ mirrors for macOS privacy compatibility and Linux XDG portability.
 ~/.config/apx/config.env
 ~/.local/state/apx/
 ~/.local/share/apx/dashboard.html
+~/.local/share/apx/dashboard/app.js
+~/.local/share/apx/dashboard/app.css
 ~/Library/LaunchAgents/io.github.apx.plist
 ~/.config/systemd/user/io.github.apx.service
 $XDG_RUNTIME_DIR/apx/

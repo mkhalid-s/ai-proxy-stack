@@ -21,23 +21,30 @@ s.close()
 PY
 )"
 
-APX_DASHBOARD_ENABLED=1 \
-APX_DASHBOARD_TOKEN=dashboard-test-token \
-APX_DASHBOARD_HTML="$ROOT/share/dashboard.html" \
-APX_DASHBOARD_STATIC_DIR="$ROOT/share/dashboard" \
-APX_STATE_DIR="$TMP/state" \
-APX_HISTORY_DIR="$TMP/history" \
-APX_METRICS_DB="$TMP/state/metrics.db" \
-GATEWAY_HOST=127.0.0.1 \
-GATEWAY_PORT="$PORT" \
-GATEWAY_TARGET_URL=http://127.0.0.1:9 \
-python3 "$ROOT/bin/apx-gateway" >"$TMP/gateway.log" 2>&1 &
-gateway_pid=$!
+start_gateway() {
+  APX_DASHBOARD_ENABLED=1 \
+  APX_DASHBOARD_TOKEN=dashboard-test-token \
+  APX_DASHBOARD_HTML="$ROOT/share/dashboard.html" \
+  APX_DASHBOARD_STATIC_DIR="$ROOT/share/dashboard" \
+  APX_STATE_DIR="$TMP/state" \
+  APX_HISTORY_DIR="$TMP/history" \
+  APX_METRICS_DB="$TMP/state/metrics.db" \
+  GATEWAY_HOST=127.0.0.1 \
+  GATEWAY_PORT="$PORT" \
+  GATEWAY_TARGET_URL=http://127.0.0.1:9 \
+  python3 "$ROOT/bin/apx-gateway" >>"$TMP/gateway.log" 2>&1 &
+  gateway_pid=$!
 
-for _ in $(seq 1 40); do
-  if curl -fsS --max-time 1 "http://127.0.0.1:$PORT/livez" >/dev/null 2>&1; then break; fi
-  sleep 1
-done
+  for _ in $(seq 1 40); do
+    if curl -fsS --max-time 1 "http://127.0.0.1:$PORT/livez" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+start_gateway
 curl -fsS --max-time 1 "http://127.0.0.1:$PORT/livez" >/dev/null
 
 unauthorized="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/")"
@@ -89,6 +96,17 @@ db.execute(
     (request_id, "headroom", 1, None, "fixture", 1500, 1200, 300,
      "measured", 4.0, "{}"),
 )
+# Simulate a malformed measured claim written by an older gateway. Read paths
+# must not count it as verified after an upgrade.
+db.execute(
+    """INSERT INTO optimizer_attempts(
+      request_id, optimizer, applied, bypass_reason, technique,
+      input_tokens_before, input_tokens_after, tokens_saved,
+      savings_confidence, optimizer_latency_ms, raw_metrics
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+    (request_id, "headroom", 1, None, "legacy-fixture", None, None, 999,
+     "measured", 3.0, "{}"),
+)
 db.execute(
     "INSERT INTO optimizer_snapshots(ts, optimizer, reachable, normalized) VALUES (?, ?, ?, ?)",
     (now, "headroom", 1, "{}"),
@@ -99,16 +117,21 @@ PY
 
 curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/summary?window=1h" -o "$TMP/summary.json"
 curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/efficiency?window=1h" -o "$TMP/efficiency.json"
-python3 - "$TMP/summary.json" "$TMP/efficiency.json" <<'PY'
+curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/efficiency/timeseries?window=1h" -o "$TMP/efficiency-series.json"
+python3 - "$TMP/summary.json" "$TMP/efficiency.json" "$TMP/efficiency-series.json" <<'PY'
 import json
 import sys
 
 summary = json.load(open(sys.argv[1], encoding="utf-8"))
 efficiency = json.load(open(sys.argv[2], encoding="utf-8"))
+series = json.load(open(sys.argv[3], encoding="utf-8"))
 assert summary["totals"]["tokens_in"] == 1200
 assert summary["totals"]["tokens_out"] == 300
 assert efficiency["durable"] is True
 assert efficiency["optimizers"][0]["measured_tokens_saved"] == 300
+assert efficiency["optimizers"][0]["measured_attempts"] == 1
+assert efficiency["optimizers"][0]["unavailable_attempts"] == 1
+assert series["series"][0]["measured_tokens_saved"] == 300
 PY
 curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/attention?window=1h" -o "$TMP/attention.json"
 python3 - "$TMP/attention.json" <<'PY'
@@ -117,11 +140,33 @@ import sys
 assert json.load(open(sys.argv[1], encoding="utf-8"))["durable"] is True
 PY
 
+# The same durable token and optimizer measurements must remain available after
+# a complete gateway process restart using the existing SQLite database.
+kill "$gateway_pid"
+wait "$gateway_pid"
+gateway_pid=""
+start_gateway
+curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/efficiency?window=1h" -o "$TMP/efficiency-after-restart.json"
+curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/optimizer-snapshots?window=1h" -o "$TMP/snapshots-after-restart.json"
+python3 - "$TMP/efficiency-after-restart.json" "$TMP/snapshots-after-restart.json" <<'PY'
+import json
+import sys
+
+efficiency = json.load(open(sys.argv[1], encoding="utf-8"))
+snapshots = json.load(open(sys.argv[2], encoding="utf-8"))
+assert efficiency["durable"] is True
+assert efficiency["observed"]["tokens_in"] == 1200
+assert efficiency["optimizers"][0]["measured_tokens_saved"] == 300
+assert snapshots["snapshots"][0]["optimizer"] == "headroom"
+PY
+
 missing="$(curl -sS -o /dev/null -w '%{http_code}' -b "$TMP/cookies" "http://127.0.0.1:$PORT/assets/missing.js")"
 [[ "$missing" == "404" ]]
 APX_DASHBOARD_STATIC_DIR="$ROOT/share/dashboard" python3 - "$ROOT/bin/apx-gateway" <<'PY'
+from email.message import Message
 import importlib.machinery
 import importlib.util
+import json
 import sys
 
 loader = importlib.machinery.SourceFileLoader("apx_gateway_asset_test", sys.argv[1])
@@ -129,6 +174,34 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
 assert module._read_dashboard_asset("/assets/%2e%2e/apx-gateway") is None
+
+def attempts(record):
+    headers = Message()
+    headers[module.OPTIMIZER_METRICS_HEADER] = json.dumps(record)
+    return module._optimizer_attempts_from_headers(headers)
+
+valid = attempts({
+    "optimizer": "headroom",
+    "input_tokens_before": 1500,
+    "input_tokens_after": 1200,
+    "savings_confidence": "measured",
+})
+assert valid[0]["tokens_saved"] == 300
+assert valid[0]["savings_confidence"] == "measured"
+
+for invalid in (
+    {"optimizer": "headroom", "tokens_saved": 300, "savings_confidence": "measured"},
+    {
+        "optimizer": "headroom",
+        "input_tokens_before": 1500,
+        "input_tokens_after": 1200,
+        "tokens_saved": 301,
+        "savings_confidence": "measured",
+    },
+):
+    normalized = attempts(invalid)[0]
+    assert normalized["savings_confidence"] == "unavailable"
+    assert normalized["tokens_saved"] is None
 PY
 
 echo dashboard-ok

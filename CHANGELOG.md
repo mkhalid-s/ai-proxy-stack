@@ -8,6 +8,9 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ### Added
 
+- The dashboard now has a Svelte/uPlot operational overview, persisted optimizer health and measurement coverage, conservative attention signals, and authenticated asset/API integration coverage.
+- `apx optimizer` reports source and ownership status; managed Headroom reconciliation is dry-run-only and external optimizers remain protected.
+- Installation configures `~/.local/bin` in supported shell PATHs, and first-time/self-service dashboard and ownership guides are included in the documentation.
 - `apx logs` now supports `--tail N` and `--no-follow` for bounded user diagnostics.
 - `apx debug level get|set info|debug|trace` persists runtime log verbosity in config and can restart the managed service.
 - `apx support-bundle` creates a redacted, metadata-only support tarball with config/status details and bounded log tails.
@@ -15,6 +18,8 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ### Changed
 
+- New installs default to `pxpipe-proxy@0.11.1`; default pxpipe launches run directly without an extra login shell, with an npm-exec fallback when npx is unavailable.
+- Installer updates preserve custom `PXPIPE_CMD` values and externally managed Headroom installations.
 - Release-mode `apx version`, `apx status`, and `apx check-updates` now discover the latest GitHub Release and report whether an update is available.
 - `APX_LOG_LEVEL` is propagated to Gateway, Headroom, pxpipe, and Squeezr child processes, and Gateway now emits additional debug/trace request diagnostics when enabled.
 

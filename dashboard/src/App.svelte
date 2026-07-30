@@ -9,13 +9,14 @@
   /** @type {{ alerts: any[] }} */ let attention = { alerts: [] };
   /** @type {any[]} */ let series = [];
   /** @type {any[]} */ let optimizerSnapshots = [];
-  /** @type {any[]} */ let optimizerMetrics = [];
+  /** @type {{ observed?: any, optimizers?: any[], durable?: boolean, note?: string }} */ let efficiency = {};
+  /** @type {any[]} */ let savingsSeries = [];
   let loading = true;
   let error = "";
-  /** @type {HTMLElement | undefined} */ let latencyTarget;
-  /** @type {HTMLElement | undefined} */ let requestsTarget;
-  /** @type {uPlot | undefined} */ let latencyPlot;
-  /** @type {uPlot | undefined} */ let requestsPlot;
+  /** @type {HTMLElement | undefined} */ let tokenTarget;
+  /** @type {HTMLElement | undefined} */ let savingsTarget;
+  /** @type {uPlot | undefined} */ let tokenPlot;
+  /** @type {uPlot | undefined} */ let savingsPlot;
   /** @type {ResizeObserver | undefined} */ let resizeObserver;
 
   /** @param {unknown} value */
@@ -24,6 +25,8 @@
   const ms = (value) => `${Number(value || 0).toFixed(Number(value || 0) < 100 ? 1 : 0)} ms`;
   /** @param {unknown} value */
   const usd = (value) => `$${Number(value || 0).toFixed(4)}`;
+  /** @param {unknown} numerator @param {unknown} denominator */
+  const percentage = (numerator, denominator) => Number(denominator || 0) ? `${(Number(numerator || 0) / Number(denominator) * 100).toFixed(0)}%` : "not measured";
   /** @param {string} value */
   const bucketFor = (value) => ["7d", "30d"].includes(value) ? "1h" : "1m";
 
@@ -40,14 +43,14 @@
     return WINDOWS.has(value) ? value : "1h";
   }
 
-  /** @param {HTMLElement} target @param {string} label @param {string} stroke */
-  function plotOptions(target, label, stroke) {
+  /** @param {HTMLElement} target @param {any[]} plotSeries */
+  function plotOptions(target, plotSeries) {
     return {
       width: Math.max(280, target.clientWidth || 0),
       height: 180,
       cursor: { drag: { x: true, y: false } },
       scales: { x: { time: true } },
-      series: [{}, { label, stroke, width: 2 }],
+      series: [{}, ...plotSeries],
       axes: [
         { stroke: "#8f98aa", grid: { stroke: "#2c3340", width: 1 } },
         { stroke: "#8f98aa", grid: { stroke: "#2c3340", width: 1 } },
@@ -57,13 +60,22 @@
 
   function syncPlots() {
     const times = series.map((row) => Number(row.ts || 0));
-    const latency = series.map((row) => Number(row.latency_p95_ms || 0));
-    const requests = series.map((row) => Number(row.requests || 0));
-    if (!latencyTarget || !requestsTarget) return;
-    latencyPlot?.destroy();
-    requestsPlot?.destroy();
-    latencyPlot = new uPlot(plotOptions(latencyTarget, "p95 latency (ms)", "#7aa2ff"), [times, latency], latencyTarget);
-    requestsPlot = new uPlot(plotOptions(requestsTarget, "requests", "#31c48d"), [times, requests], requestsTarget);
+    const input = series.map((row) => Number(row.tokens_in || 0));
+    const output = series.map((row) => Number(row.tokens_out || 0));
+    const savingsTimes = savingsSeries.map((row) => Number(row.ts || 0));
+    const measured = savingsSeries.map((row) => Number(row.measured_tokens_saved || 0));
+    const estimated = savingsSeries.map((row) => Number(row.estimated_tokens_saved || 0));
+    if (!tokenTarget || !savingsTarget) return;
+    tokenPlot?.destroy();
+    savingsPlot?.destroy();
+    tokenPlot = new uPlot(plotOptions(tokenTarget, [
+      { label: "input tokens", stroke: "#7aa2ff", width: 2 },
+      { label: "output tokens", stroke: "#76e4b7", width: 2 },
+    ]), [times, input, output], tokenTarget);
+    savingsPlot = new uPlot(plotOptions(savingsTarget, [
+      { label: "verified saved", stroke: "#76e4b7", width: 2 },
+      { label: "estimated saved", stroke: "#ffc56d", width: 2, dash: [6, 4] },
+    ]), [savingsTimes, measured, estimated], savingsTarget);
   }
 
   async function refresh() {
@@ -71,17 +83,19 @@
     error = "";
     windowValue = currentWindow();
     try {
-      const [nextSummary, nextAttention, nextSeries, nextEfficiency, nextSnapshots] = await Promise.all([
+      const [nextSummary, nextAttention, nextSeries, nextEfficiency, nextSavingsSeries, nextSnapshots] = await Promise.all([
         getJSON(`/api/metrics/summary?window=${windowValue}`),
         getJSON(`/api/metrics/attention?window=${windowValue}`),
         getJSON(`/api/metrics/timeseries?window=${windowValue}&bucket=${bucketFor(windowValue)}`),
         getJSON(`/api/metrics/efficiency?window=${windowValue}`),
+        getJSON(`/api/metrics/efficiency/timeseries?window=${windowValue}&bucket=${bucketFor(windowValue)}`),
         getJSON(`/api/metrics/optimizer-snapshots?window=${windowValue}`),
       ]);
       summary = nextSummary;
       attention = nextAttention;
       series = nextSeries.series || [];
-      optimizerMetrics = nextEfficiency.optimizers || [];
+      efficiency = nextEfficiency;
+      savingsSeries = nextSavingsSeries.series || [];
       optimizerSnapshots = nextSnapshots.snapshots || [];
       await tick();
       syncPlots();
@@ -100,15 +114,16 @@
     selector?.addEventListener("change", onWindowChange);
     const interval = window.setInterval(refresh, 10_000);
     resizeObserver = new ResizeObserver(() => syncPlots());
-    if (latencyTarget) resizeObserver.observe(latencyTarget);
-    if (requestsTarget) resizeObserver.observe(requestsTarget);
+    document.querySelector("#legacy-dashboard")?.removeAttribute("open");
+    if (tokenTarget) resizeObserver.observe(tokenTarget);
+    if (savingsTarget) resizeObserver.observe(savingsTarget);
     return () => {
       document.body.classList.remove("svelte-overview-active");
       selector?.removeEventListener("change", onWindowChange);
       window.clearInterval(interval);
       resizeObserver?.disconnect();
-      latencyPlot?.destroy();
-      requestsPlot?.destroy();
+      tokenPlot?.destroy();
+      savingsPlot?.destroy();
     };
   });
 
@@ -117,65 +132,40 @@
     if (!latest[snapshot.optimizer] || Number(snapshot.ts || 0) > Number(latest[snapshot.optimizer].ts || 0)) latest[snapshot.optimizer] = snapshot;
     return latest;
   }, /** @type {Record<string, any>} */ ({})));
+  $: optimizerMetrics = efficiency.optimizers || [];
+  $: observed = efficiency.observed || {};
+  $: totalTokens = Number(observed.tokens_in || summary.totals?.tokens_in || 0) + Number(observed.tokens_out || summary.totals?.tokens_out || 0);
+  $: verifiedSaved = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.measured_tokens_saved || 0), 0);
+  $: measuredAttempts = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.measured_attempts || 0), 0);
+  $: optimizerAttempts = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.attempts || 0), 0);
+  $: failures = Number(summary.totals?.err_5xx || 0) + Number(summary.totals?.warn_4xx || 0);
+
+  function openDetails() {
+    const details = /** @type {HTMLDetailsElement | null} */ (document.querySelector("#legacy-dashboard"));
+    if (details) {
+      details.open = true;
+      details.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
 </script>
 
 <section class="overview" aria-label="Gateway overview">
   <div class="heading">
     <div>
-      <p class="eyebrow">Live gateway overview</p>
-      <h2>Operational signals</h2>
+      <p class="eyebrow">LeanRelay · token efficiency</p>
+      <h2>What needs your attention</h2>
     </div>
-    <span class:ok={!loading && !error} class:warn={loading} class:fail={!!error} class="status">
-      {error ? "refresh failed" : loading ? "refreshing" : `last ${windowValue}`}
-    </span>
+    <div class="heading-actions">
+      <button class="details-button" type="button" on:click={openDetails}>Open details</button>
+      <span class:ok={!loading && !error} class:warn={loading} class:fail={!!error} class="status">
+        {error ? "refresh failed" : loading ? "refreshing" : `last ${windowValue}`}
+      </span>
+    </div>
   </div>
 
   {#if error}
     <div class="error">{error}. The legacy dashboard remains available below.</div>
   {/if}
-
-  <div class="metrics">
-    <article><span>Requests</span><strong>{number(summary.totals?.requests)}</strong><small>{number(summary.totals?.ok)} ok · {number(summary.totals?.err_5xx)} failed</small></article>
-    <article><span>Latency p95</span><strong>{ms(summary.latency_ms?.p95)}</strong><small>first byte {ms(summary.first_byte_ms?.p95)}</small></article>
-    <article><span>Tokens</span><strong>{number((summary.totals?.tokens_in || 0) + (summary.totals?.tokens_out || 0))}</strong><small>cache {number(summary.totals?.cache_read_tokens)} read</small></article>
-    <article><span>Estimated cost</span><strong>{usd(summary.totals?.cost_est_usd)}</strong><small>{number(summary.totals?.tool_calls)} tool calls</small></article>
-  </div>
-
-  <div class="charts">
-    <article class="chart"><h3>Latency p95</h3><div class="plot" bind:this={latencyTarget}></div></article>
-    <article class="chart"><h3>Requests</h3><div class="plot" bind:this={requestsTarget}></div></article>
-  </div>
-
-  <div class="optimizer-grid">
-    <article class="optimizer-health">
-      <div class="attention-heading"><h3>Persisted optimizer health</h3><span class="status">{latestOptimizerSnapshots.length} tracked</span></div>
-      {#if latestOptimizerSnapshots.length}
-        <div class="health-list">
-          {#each latestOptimizerSnapshots as snapshot (snapshot.optimizer)}
-            <div class:up={snapshot.reachable} class:down={!snapshot.reachable} class="health-row">
-              <strong>{snapshot.optimizer}</strong><span>{snapshot.reachable ? "reachable" : "unreachable"}</span><small>{new Date(Number(snapshot.ts || 0) * 1000).toLocaleString()}</small>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <p class="clear">No optimizer snapshots in this window yet.</p>
-      {/if}
-    </article>
-    <article class="optimizer-health">
-      <div class="attention-heading"><h3>Savings measurement coverage</h3><span class="status">explicit only</span></div>
-      {#if optimizerMetrics.length}
-        <div class="health-list">
-          {#each optimizerMetrics as optimizer (optimizer.optimizer)}
-            <div class="health-row">
-              <strong>{optimizer.optimizer}</strong><span>{number(optimizer.measured_attempts)}/{number(optimizer.attempts)} verified</span><small>{number(optimizer.estimated_attempts)} estimated · {number(optimizer.unavailable_attempts)} unavailable</small>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <p class="clear">No optimizer attempts in this window yet.</p>
-      {/if}
-    </article>
-  </div>
 
   <div class="attention">
     <div class="attention-heading"><h3>Needs attention</h3><span class:ok={!attention.alerts?.length} class:warn={attention.alerts?.some((alert) => alert.severity === "warning")} class:fail={attention.alerts?.some((alert) => alert.severity === "critical")} class="status">{attention.alerts?.length || 0} signals</span></div>
@@ -190,5 +180,48 @@
     {:else}
       <p class="clear">No active signals in this window.</p>
     {/if}
+  </div>
+
+  <div class="metrics" aria-label="Token efficiency summary">
+    <article><span>Tokens processed</span><strong>{number(totalTokens)}</strong><small>{number(observed.tokens_in)} input · {number(observed.tokens_out)} output</small></article>
+    <article class="token-card"><span>Verified tokens saved</span><strong>{number(verifiedSaved)}</strong><small>Explicit pre/post optimizer measurements only</small></article>
+    <article><span>Savings coverage</span><strong>{percentage(measuredAttempts, optimizerAttempts)}</strong><small>{number(measuredAttempts)} of {number(optimizerAttempts)} optimizer attempts verified</small></article>
+    <article><span>Gateway health</span><strong class:healthy={failures === 0}>{failures ? `${number(failures)} issue${failures === 1 ? "" : "s"}` : "Healthy"}</strong><small>{number(summary.totals?.requests)} requests · p95 {ms(summary.latency_ms?.p95)}</small></article>
+  </div>
+
+  <div class="charts">
+    <article class="chart"><div class="chart-heading"><div><h3>Token flow</h3><small>Observed input and output tokens</small></div><span class="status">{windowValue}</span></div><div class="plot" bind:this={tokenTarget}></div></article>
+    <article class="chart"><div class="chart-heading"><div><h3>Savings evidence</h3><small>Verified savings is distinct from estimates</small></div><span class="status">explicit</span></div><div class="plot" bind:this={savingsTarget}></div></article>
+  </div>
+
+  <div class="optimizer-grid">
+    <article class="optimizer-health">
+      <div class="attention-heading"><h3>Optimizer health</h3><span class="status">{latestOptimizerSnapshots.length} tracked</span></div>
+      {#if latestOptimizerSnapshots.length}
+        <div class="health-list">
+          {#each latestOptimizerSnapshots as snapshot (snapshot.optimizer)}
+            <div class:up={snapshot.reachable} class:down={!snapshot.reachable} class="health-row">
+              <strong>{snapshot.optimizer}</strong><span>{snapshot.reachable ? "reachable" : "unreachable"}</span><small>last checked {new Date(Number(snapshot.ts || 0) * 1000).toLocaleString()}</small>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <p class="clear">No optimizer snapshots in this window yet.</p>
+      {/if}
+    </article>
+    <article class="optimizer-health">
+      <div class="attention-heading"><h3>Measurement confidence</h3><span class:ok={efficiency.durable} class:warn={!efficiency.durable} class="status">{efficiency.durable ? "durable" : "not persistent"}</span></div>
+      {#if optimizerMetrics.length}
+        <div class="health-list">
+          {#each optimizerMetrics as optimizer (optimizer.optimizer)}
+            <div class="health-row">
+              <strong>{optimizer.optimizer}</strong><span>{number(optimizer.measured_attempts)}/{number(optimizer.attempts)} verified</span><small>{number(optimizer.estimated_attempts)} estimated · {number(optimizer.unavailable_attempts)} unavailable</small>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <p class="clear">No optimizer attempts in this window yet. {efficiency.note || "Savings will appear only when adapters emit measurements."}</p>
+      {/if}
+    </article>
   </div>
 </section>

@@ -81,7 +81,8 @@ load_config() {
   : "${HEADROOM_ENABLED:=1}"
   : "${SQUEEZR_ENABLED:=0}"
   : "${GATEWAY_CMD:=$HOME/.local/bin/apx-gateway}"
-  : "${PXPIPE_CMD:=npx -y pxpipe-proxy@0.11.1}"
+  : "${PXPIPE_PACKAGE_SPEC:=pxpipe-proxy@0.11.1}"
+  : "${PXPIPE_CMD:=npx -y $PXPIPE_PACKAGE_SPEC}"
   : "${SQUEEZR_CMD:=$HOME/.local/bin/apx-squeezr}"
   : "${SQUEEZR_PACKAGE_SPEC:=squeezr-ai@1.99.2}"
   : "${PXPIPE_MODELS:=claude-fable-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5}"
@@ -372,7 +373,18 @@ start_pxpipe() {
     cd "$WORKDIR"
     export_ca_bundle
     export PORT="$PXPIPE_PORT" PXPIPE_PORT="$PXPIPE_PORT" HOST="$APX_INTERNAL_HOST" PXPIPE_MODELS="$PXPIPE_MODELS" ANTHROPIC_UPSTREAM="$PXPIPE_TARGET_API_URL" APX_LOG_LEVEL="$APX_LOG_LEVEL"
-    exec bash -lc "export PATH=\"$PATH\"; exec $PXPIPE_CMD $PXPIPE_EXTRA_ARGS"
+    # Default package commands are executed directly. This avoids a second
+    # login shell resetting npx/node resolution on macOS, NVM, and devcontainer
+    # environments. Custom commands retain shell compatibility below.
+    if [[ "$PXPIPE_CMD" == "npx -y $PXPIPE_PACKAGE_SPEC" ]]; then
+        # shellcheck disable=SC2086
+        exec npx --yes --package="$PXPIPE_PACKAGE_SPEC" pxpipe $PXPIPE_EXTRA_ARGS
+    elif [[ "$PXPIPE_CMD" == "npm exec --yes $PXPIPE_PACKAGE_SPEC" ]]; then
+        # shellcheck disable=SC2086
+        exec npm exec --yes --package="$PXPIPE_PACKAGE_SPEC" -- pxpipe $PXPIPE_EXTRA_ARGS
+    else
+        exec bash -lc "export PATH=\"$PATH\"; exec $PXPIPE_CMD $PXPIPE_EXTRA_ARGS"
+    fi
   ) >> "$log_file" 2>&1 &
   echo $! > "$RUN_DIR/pxpipe.pid"
   wait_until_ok pxpipe pxpipe_ok
@@ -911,7 +923,7 @@ optimizer_ownership() {
       fi
       ;;
     pxpipe)
-      if [[ "$PXPIPE_CMD" == "npx -y pxpipe-proxy@0.11.1" || "$PXPIPE_CMD" == "npm exec --yes pxpipe-proxy@0.11.1" ]]; then
+      if [[ "$PXPIPE_CMD" == "npx -y $PXPIPE_PACKAGE_SPEC" || "$PXPIPE_CMD" == "npm exec --yes $PXPIPE_PACKAGE_SPEC" ]]; then
         printf '%s\n' configured-default
       else
         printf '%s\n' external

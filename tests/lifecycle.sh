@@ -141,10 +141,6 @@ if "$APX" headroom settings set tls-strict off --no-restart >/dev/null 2>&1; the
   exit 1
 fi
 "$APX" squeezr bypass --help >/dev/null
-if [[ "$("$APX" optimizer pxpipe models get)" != "PXPIPE_MODELS=off" ]]; then
-  echo "ERROR: grouped optimizer pxpipe command did not preserve the legacy behavior" >&2
-  exit 1
-fi
 if ! "$APX" optimizer headroom settings get | grep -q '^tool-search=false$'; then
   echo "ERROR: grouped optimizer headroom command did not preserve the legacy behavior" >&2
   exit 1
@@ -154,15 +150,31 @@ if ! "$APX" config port get gateway | grep -q "^GATEWAY_PORT=$PORT$"; then
   exit 1
 fi
 
-# The configuration advisor must stay local/read-only, provide a stable JSON
-# shape, and let a user explicitly dismiss an intentional recommendation.
+# The configuration advisor exposes machine-readable safety metadata and only
+# changes config under an explicit, reversible --apply-safe request.
 advisor_json="$("$APX" config advise --json)"
-if [[ "$advisor_json" != *'"id":"metrics-disabled"'* || "$advisor_json" != *'"severity":"recommended"'* ]]; then
+if [[ "$advisor_json" != *'"id":"metrics-disabled"'* || "$advisor_json" != *'"safe_to_apply":true'* ]]; then
   echo "ERROR: config advisor did not report disabled metrics as JSON" >&2
   exit 1
 fi
-"$APX" config advise --dismiss metrics-disabled >/dev/null
+"$APX" config advise --apply-safe metrics-disabled >/dev/null
+grep -q '^APX_METRICS_ENABLED=1$' "$APX_CONFIG"
 if "$APX" config advise | grep -q 'Enable durable token metrics'; then
+  echo "ERROR: applied metrics advisory was still active" >&2
+  exit 1
+fi
+
+# The pxpipe action is safe only when the configured chain enables pxpipe and
+# image conversion is not intentionally disabled.
+"$APX" pxpipe models set claude-fable-5 --no-restart >/dev/null
+"$APX" mode pxpipe --no-restart --no-claude-sync >/dev/null
+advisor_json="$("$APX" config advise --json)"
+if [[ "$advisor_json" != *'"id":"pxpipe-models-missing-opus-5"'* || "$advisor_json" != *'"safe_to_apply":true'* ]]; then
+  echo "ERROR: config advisor did not report pxpipe model drift as safely applicable" >&2
+  exit 1
+fi
+"$APX" config advise --dismiss pxpipe-models-missing-opus-5 >/dev/null
+if "$APX" config advise | grep -q 'Add Claude Opus 5'; then
   echo "ERROR: dismissed configuration advisory was still active" >&2
   exit 1
 fi
@@ -171,8 +183,18 @@ if [[ "$advisor_all" != *'Status: dismissed'* ]]; then
   echo "ERROR: config advisor did not show dismissed advisory on request" >&2
   exit 1
 fi
+"$APX" config advise --apply-safe pxpipe-models-missing-opus-5 >/dev/null
+grep -q '^PXPIPE_MODELS="claude-fable-5,claude-opus-5"$' "$APX_CONFIG"
+if [[ "$("$APX" optimizer pxpipe models get)" != "PXPIPE_MODELS=claude-fable-5,claude-opus-5" ]]; then
+  echo "ERROR: grouped optimizer pxpipe command did not preserve the applied allowlist" >&2
+  exit 1
+fi
 if "$APX" config advise --json --dismiss metrics-disabled >/dev/null 2>&1; then
   echo "ERROR: config advisor accepted incompatible JSON/dismiss flags" >&2
+  exit 1
+fi
+if "$APX" config advise --apply-safe dashboard-exposed-without-token >/dev/null 2>&1; then
+  echo "ERROR: config advisor applied an advisory that requires user input" >&2
   exit 1
 fi
 

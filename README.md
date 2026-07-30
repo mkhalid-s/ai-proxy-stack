@@ -647,15 +647,17 @@ dashboard cannot explain token savings:
 apx config advise
 apx config advise --json                 # for scripts and support tooling
 apx config advise --dismiss metrics-disabled
+apx config advise --apply-safe metrics-disabled
 ```
 
 It checks only deterministic local facts: token-metrics availability, known
 pxpipe model capability, externally exposed dashboard protection, non-local
 HTTP upstreams, optimizer ownership, and the cached daily optimizer update
 result. Every finding includes its impact and an exact next command. It never
-contacts a registry, changes `config.env`, or restarts a service. Dismissals
-are stored by advisory ID and guidance version under apx state; use `--show-all`
-to review them later.
+contacts a registry or restarts a service. `--apply-safe` only handles listed,
+reversible configuration changes and still requires a separate `apx restart`.
+Dismissals are stored by advisory ID and guidance version under apx state; use
+`--show-all` to review them later.
 
 ### Command layout
 

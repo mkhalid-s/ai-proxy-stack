@@ -1030,9 +1030,10 @@ optimizer_update_summary() {
 # --- configuration advisor -------------------------------------------------
 #
 # The advisor deliberately evaluates local, deterministic facts only.  It does
-# not contact registries, alter config, or restart services.  Advisory IDs are
-# versioned so a meaningful change to a recommendation is shown again instead
-# of being hidden by an old dismissal.
+# not contact registries or restart services. Config changes require an
+# explicit, allowlisted --apply-safe action. Advisory IDs are versioned so a
+# meaningful change to a recommendation is shown again instead of being hidden
+# by an old dismissal.
 advisor_is_dismissed() {
   local id="$1" version="$2"
   [[ -f "$ADVISOR_DISMISSALS_FILE" ]] || return 1
@@ -1051,6 +1052,54 @@ advisor_dismiss() {
   fi
   echo "dismissed advisory: $id (version 1)"
   echo "run: apx config advise --show-all to review dismissed advisories"
+}
+
+advisor_is_safe_to_apply() {
+  case "$1" in
+    metrics-disabled|pxpipe-models-missing-opus-5) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+advisor_apply_safe() {
+  local id="$1"
+  load_config
+  case "$id" in
+    metrics-disabled)
+      if [[ "$APX_METRICS_ENABLED" == "1" ]]; then
+        echo "no change: durable metrics are already enabled"
+        return 0
+      fi
+      set_config_var APX_METRICS_ENABLED 1
+      echo "applied: APX_METRICS_ENABLED=1"
+      echo "not restarted; run: apx restart"
+      ;;
+    pxpipe-models-missing-opus-5)
+      if [[ "$PXPIPE_ENABLED" != "1" ]]; then
+        echo "refusing: pxpipe is not enabled in the configured chain" >&2
+        return 1
+      fi
+      if [[ "$PXPIPE_MODELS" == "off" ]]; then
+        echo "refusing: pxpipe image conversion is intentionally disabled" >&2
+        return 1
+      fi
+      if [[ ",${PXPIPE_MODELS}," == *",claude-opus-5,"* ]]; then
+        echo "no change: Claude Opus 5 is already in PXPIPE_MODELS"
+        return 0
+      fi
+      if ! pxpipe_models_valid "$PXPIPE_MODELS"; then
+        echo "refusing: PXPIPE_MODELS is not a valid explicit model list" >&2
+        return 1
+      fi
+      set_config_var PXPIPE_MODELS "$(config_quote "$PXPIPE_MODELS,claude-opus-5")"
+      echo "applied: added claude-opus-5 to PXPIPE_MODELS"
+      echo "not restarted; run: apx restart"
+      ;;
+    *)
+      echo "refusing: $id requires a user-provided value, ownership review, or explicit investigation" >&2
+      return 2
+      ;;
+  esac
 }
 
 advisor_json_escape() {
@@ -1117,8 +1166,9 @@ config_advise_usage() {
   cat <<'EOF'
 usage: apx config <advise|chain|target|port|claude|mode> ...
 
-  advise [--json] [--show-all]  Review safe local recommendations.
+  advise [--json] [--show-all]  Review local recommendations.
   advise --dismiss ADVISORY_ID  Dismiss one versioned recommendation.
+  advise --apply-safe ID        Persist one reviewed, reversible recommendation.
   chain ...                     Configure optimizer routing order.
   target ...                    Configure the upstream API endpoint.
   port ...                      Configure local listener ports.
@@ -1127,23 +1177,26 @@ usage: apx config <advise|chain|target|port|claude|mode> ...
 
 `advise` reviews local configuration for token observability, safe capability
 upgrades, security posture, ownership, and cached optimizer-version updates.
-It does not contact a registry, change configuration, or restart apx.
+It does not contact a registry or restart apx. It changes configuration only
+when `--apply-safe` explicitly selects one of the listed reversible actions.
 
   --json                 Emit stable machine-readable advisory records.
   --show-all             Include advisories previously dismissed by this user.
   --dismiss ID           Hide one advisory version until its guidance changes.
+  --apply-safe ID        Apply a safe advisory without restarting apx.
 
 Examples:
   apx config advise
   apx config advise --json
   apx config advise --dismiss metrics-disabled
+  apx config advise --apply-safe metrics-disabled
   apx config chain set headroom,pxpipe
   apx config port set pxpipe 47822
 EOF
 }
 
 config_advise() {
-  local json=0 show_all=0 dismiss_id="" arg
+  local json=0 show_all=0 dismiss_id="" apply_id="" arg
   while [[ $# -gt 0 ]]; do
     arg="$1"
     case "$arg" in
@@ -1151,14 +1204,20 @@ config_advise() {
       --show-all) show_all=1 ;;
       --dismiss) shift; dismiss_id="${1:-}"; [[ -n "$dismiss_id" ]] || { config_advise_usage >&2; return 2; } ;;
       --dismiss=*) dismiss_id="${arg#--dismiss=}" ;;
+      --apply-safe) shift; apply_id="${1:-}"; [[ -n "$apply_id" ]] || { config_advise_usage >&2; return 2; } ;;
+      --apply-safe=*) apply_id="${arg#--apply-safe=}" ;;
       -h|--help|help) config_advise_usage; return 0 ;;
       *) config_advise_usage >&2; return 2 ;;
     esac
     shift
   done
   [[ -z "$dismiss_id" || "$json" == "0" ]] || { echo "--dismiss cannot be combined with --json" >&2; return 2; }
+  [[ -z "$apply_id" || "$json" == "0" ]] || { echo "--apply-safe cannot be combined with --json" >&2; return 2; }
   [[ -z "$dismiss_id" || "$show_all" == "0" ]] || { echo "--dismiss cannot be combined with --show-all" >&2; return 2; }
+  [[ -z "$apply_id" || "$show_all" == "0" ]] || { echo "--apply-safe cannot be combined with --show-all" >&2; return 2; }
+  [[ -z "$dismiss_id" || -z "$apply_id" ]] || { echo "--dismiss cannot be combined with --apply-safe" >&2; return 2; }
   [[ -z "$dismiss_id" ]] || { advisor_dismiss "$dismiss_id"; return $?; }
+  [[ -z "$apply_id" ]] || { advisor_apply_safe "$apply_id"; return $?; }
 
   local id version severity category title impact remediation dismissed emitted=0 first=1
   if [[ "$json" == "1" ]]; then printf '[\n'; else echo "configuration advisor (local, read-only)"; fi
@@ -1171,11 +1230,13 @@ config_advise() {
     if [[ "$json" == "1" ]]; then
       [[ "$first" == "1" ]] || printf ',\n'
       first=0
-      printf '  {"id":"%s","version":%s,"severity":"%s","category":"%s","title":"%s","impact":"%s","remediation":"%s","dismissed":%s}' \
+      printf '  {"id":"%s","version":%s,"severity":"%s","category":"%s","title":"%s","impact":"%s","remediation":"%s","safe_to_apply":%s,"dismissed":%s}' \
         "$(advisor_json_escape "$id")" "$version" "$(advisor_json_escape "$severity")" "$(advisor_json_escape "$category")" \
-        "$(advisor_json_escape "$title")" "$(advisor_json_escape "$impact")" "$(advisor_json_escape "$remediation")" "$([[ "$dismissed" == "1" ]] && echo true || echo false)"
+        "$(advisor_json_escape "$title")" "$(advisor_json_escape "$impact")" "$(advisor_json_escape "$remediation")" \
+        "$(advisor_is_safe_to_apply "$id" && echo true || echo false)" "$([[ "$dismissed" == "1" ]] && echo true || echo false)"
     else
       printf '\n[%s] %s — %s\n  Impact: %s\n  Next: %s\n' "$severity" "$category" "$title" "$impact" "$remediation"
+      advisor_is_safe_to_apply "$id" && echo "  Safe apply: apx config advise --apply-safe $id (configuration only; restart separately)"
       [[ "$dismissed" == "0" ]] || echo "  Status: dismissed"
     fi
   done < <(advisor_rules)
@@ -3851,7 +3912,7 @@ _apx_completions() {
   fi
   case "\${words[1]}" in
     mode)     COMPREPLY=( \$(compgen -W "$modes" -- "\$cur") ) ;;
-    config)   COMPREPLY=( \$(compgen -W "advise chain target port claude mode --json --show-all --dismiss" -- "\$cur") ) ;;
+    config)   COMPREPLY=( \$(compgen -W "advise chain target port claude mode --json --show-all --dismiss --apply-safe" -- "\$cur") ) ;;
     chain)    COMPREPLY=( \$(compgen -W "$chain_subs $services" -- "\$cur") ) ;;
     target)   COMPREPLY=( \$(compgen -W "$target_subs --no-restart" -- "\$cur") ) ;;
     port)     COMPREPLY=( \$(compgen -W "$port_subs $port_services --no-restart --no-claude-sync" -- "\$cur") ) ;;
@@ -3898,7 +3959,7 @@ ZSH
     chain) _describe -t chain 'apx chain' chain_subs && _describe -t services 'services' services ;;
     target) _describe -t target 'apx target' target_subs ;;
     port) _describe -t port 'apx port' port_subs && _describe -t port-services 'services' port_services ;;
-    config) _values 'configuration action' 'advise' 'chain' 'target' 'port' 'claude' 'mode' '--json' '--show-all' '--dismiss[advisory ID]' ;;
+    config) _values 'configuration action' 'advise' 'chain' 'target' 'port' 'claude' 'mode' '--json' '--show-all' '--dismiss[advisory ID]' '--apply-safe[advisory ID]' ;;
     optimizer) _values 'optimizer action' 'sources' 'status' 'latest' 'reconcile' 'headroom' 'pxpipe' 'squeezr' '--dry-run' ;;
     headroom) _values 'headroom action' 'settings' 'get' 'set' 'tool-search' 'code-aware' 'code-graph' 'on' 'off' '--no-restart' ;;
     pxpipe) _values 'pxpipe action' 'models' 'get' 'set' 'off' '--no-restart' ;;
@@ -3926,7 +3987,7 @@ FISH
       for m in $modes; do
         printf 'complete -c apx -n "__fish_seen_subcommand_from mode" -a "%s"\n' "$m"
       done
-      for c in advise chain target port claude mode --json --show-all --dismiss; do
+      for c in advise chain target port claude mode --json --show-all --dismiss --apply-safe; do
         printf 'complete -c apx -n "__fish_seen_subcommand_from config" -a "%s"\n' "$c"
       done
       for c in $chain_subs; do

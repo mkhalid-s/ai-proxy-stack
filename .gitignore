@@ -23,3 +23,5 @@ dashboard/node_modules/
 
 # Build outputs (dist/apx.sh + sha256) are release artifacts, not committed.
 dist/
+dashboard/test-results/
+dashboard/playwright-report/

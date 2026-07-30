@@ -495,6 +495,43 @@ sync_runtime() {
   sync_config
 }
 
+ensure_local_bin_on_shell_path() {
+  local shell_name rc_file marker="# Added by apx installer: user-local commands"
+  shell_name="$(basename "${SHELL:-}")"
+  case "$shell_name" in
+    zsh) rc_file="$HOME/.zshrc" ;;
+    bash) rc_file="$HOME/.bashrc" ;;
+    fish)
+      if [[ "$CHECK_ONLY" == "1" ]]; then
+        log "would add $HOME/.local/bin to fish's universal PATH"
+      elif command -v fish >/dev/null 2>&1; then
+        fish -c "fish_add_path '$HOME/.local/bin'"
+        log "added $HOME/.local/bin to fish's universal PATH"
+      else
+        warn "fish is your login shell but is unavailable during install; add $HOME/.local/bin with fish_add_path"
+      fi
+      return 0
+      ;;
+    *)
+      warn "could not detect a supported login shell; add $HOME/.local/bin to PATH manually"
+      return 0
+      ;;
+  esac
+  if [[ "$CHECK_ONLY" == "1" ]]; then
+    log "would ensure $HOME/.local/bin is exported from $rc_file"
+    return 0
+  fi
+  if [[ -f "$rc_file" ]] && grep -Fq "$HOME/.local/bin" "$rc_file"; then
+    log "$HOME/.local/bin is already configured in $rc_file"
+    return 0
+  fi
+  {
+    printf '\n%s\n' "$marker"
+    printf 'export PATH="$HOME/.local/bin:$PATH"\n'
+  } >> "$rc_file"
+  log "added $HOME/.local/bin to $rc_file; open a new terminal or reload it"
+}
+
 configure_claude_client() {
   if [[ "$CLIENT_TOPOLOGY" == "none" ]]; then
     if [[ "$YES" == "1" || ! -t 0 ]]; then
@@ -625,6 +662,7 @@ main() {
 
   install_deps
   sync_runtime
+  ensure_local_bin_on_shell_path
   configure_claude_client
   install_service
   validate_health

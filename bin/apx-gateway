@@ -2551,12 +2551,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def _send_untrusted_header(self, keyword: object, value: object) -> None:
         raw_name = str(keyword)
         raw_value = str(value)
-        safe_name = re.sub(r"[\r\n:]", "", raw_name)
+        safe_name = raw_name.replace("\r", "").replace("\n", "").replace(":", "")
         safe_value = raw_value.replace("\r", "").replace("\n", "")
         if safe_name != raw_name or safe_value != raw_value:
             security_event("response_header_rejected", header_name=raw_name)
             return
-        self.send_header(safe_name, safe_value)
+        super().send_header(safe_name, safe_value)
 
     def log_message(self, fmt: str, *args: object) -> None:
         safe_args = list(args)

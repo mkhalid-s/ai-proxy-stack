@@ -39,3 +39,15 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
+
+  - package-ecosystem: docker
+    directory: /.clusterfuzzlite
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:45"
+      timezone: Etc/UTC
+    labels:
+      - dependencies
+      - security
+    open-pull-requests-limit: 2

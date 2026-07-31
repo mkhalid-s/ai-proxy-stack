@@ -32,6 +32,13 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 - Releases are prepared through a protected pull request and finalized only
   after exact-SHA CI and security checks pass on the merged `main` commit.
 
+### Fixed
+
+- The tag-triggered release workflow now grants its reusable security gate the
+  read-only pull-request permission required to validate the workflow graph.
+- GitHub Release bodies are now generated deterministically from the matching
+  version section in `CHANGELOG.md`.
+
 ## [0.6.3] - 2026-07-31
 
 ### Fixed

@@ -56,8 +56,33 @@ jobs:
 
       - name: Python compile
         run: |
-          python -m py_compile bin/apx-gateway tests/security_properties.py fuzz/gateway_boundaries_fuzzer.py
+          python -m py_compile bin/apx-gateway build/release-notes.py tests/security_properties.py fuzz/gateway_boundaries_fuzzer.py
           python tests/security_properties.py
+          version="$(tr -d '[:space:]' < VERSION)"
+          python build/release-notes.py "$version" CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          grep -q "^## \[$version\]" "$RUNNER_TEMP/release-notes.md"
+
+      - name: Verify release reusable-workflow permission contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path(".github/workflows/release.yml").read_text()
+          start = workflow.index("  full-security:")
+          end = workflow.index("\n  verify:", start)
+          permissions = workflow[start:end]
+          required = (
+              "      contents: read",
+              "      pull-requests: read",
+              "      security-events: write",
+          )
+          missing = [entry.strip() for entry in required if entry not in permissions]
+          if missing:
+              raise SystemExit(
+                  "release full-security permission contract is incomplete: "
+                  + ", ".join(missing)
+              )
+          PY
 
       - name: Verify apx exports 0.4 gateway config
         run: |

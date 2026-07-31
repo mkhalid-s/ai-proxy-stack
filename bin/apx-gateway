@@ -2548,6 +2548,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return
         super().send_header(*checked)
 
+    def _send_untrusted_header(self, keyword: object, value: object) -> None:
+        raw_name = str(keyword)
+        raw_value = str(value)
+        safe_name = re.sub(r"[\r\n:]", "", raw_name)
+        safe_value = raw_value.replace("\r", "").replace("\n", "")
+        if safe_name != raw_name or safe_value != raw_value:
+            security_event("response_header_rejected", header_name=raw_name)
+            return
+        self.send_header(safe_name, safe_value)
+
     def log_message(self, fmt: str, *args: object) -> None:
         safe_args = list(args)
         if safe_args and isinstance(safe_args[0], str):
@@ -3012,7 +3022,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     continue
                 if prefix and lower == "location" and value.startswith("/"):
                     value = prefix + value
-                self.send_header(key, value)
+                self._send_untrusted_header(key, value)
             if rewrite_body:
                 self.send_header("content-length", str(len(body_out)))
             self.send_header("x-frame-options", "DENY")
@@ -3290,7 +3300,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self.send_header("x-content-type-options", "nosniff")
             self.send_header("x-frame-options", "DENY")
             for key, value in (extra_headers or {}).items():
-                self.send_header(key, value)
+                self._send_untrusted_header(key, value)
             self.send_header("connection", "close")
             self.end_headers()
             if self.command != "HEAD":
@@ -3549,9 +3559,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 lower = key.lower()
                 if lower in HOP_BY_HOP_HEADERS or lower in {"server-timing", OPTIMIZER_METRICS_HEADER}:
                     continue
-                self.send_header(key, value)
-            self.send_header("x-apx-request-id", request_id)
-            self.send_header("x-apx-session-id", session_id)
+                self._send_untrusted_header(key, value)
+            self.send_header(
+                "x-apx-request-id", request_id.replace("\r", "").replace("\n", "")
+            )
+            self.send_header(
+                "x-apx-session-id", session_id.replace("\r", "").replace("\n", "")
+            )
             self.send_header("connection", "close")
             # We can only send headers before streaming the body, so this
             # header reports gateway time-to-first-upstream-headers. The full
@@ -3559,7 +3573,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
             gateway_ttfb_ms = int((time.time() - started) * 1000)
             st_entries = [f'gateway_ttfb;dur={gateway_ttfb_ms}']
             if upstream_st:
-                st_entries.append(upstream_st)
+                safe_upstream_st = upstream_st.replace("\r", "").replace("\n", "")
+                if safe_upstream_st == upstream_st:
+                    st_entries.append(safe_upstream_st)
+                else:
+                    security_event("response_header_rejected", header_name="server-timing")
             self.send_header("server-timing", ", ".join(st_entries))
             self.end_headers()
             response_started = True

@@ -14,6 +14,8 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
   response, and security-release documentation.
 - Release SPDX SBOMs and GitHub provenance/SBOM attestations.
 - Structured, body-free dashboard authentication failure events.
+- Coverage-guided ClusterFuzzLite testing for proxy path, response-header, and
+  correlation-ID trust boundaries.
 
 ### Changed
 
@@ -23,6 +25,8 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 - Proxy paths reject encoded traversal and origin-confusing forms, malformed
   upstream response headers are dropped, and health responses no longer expose
   the configured upstream target.
+- Releases are prepared through a protected pull request and finalized only
+  after exact-SHA CI and security checks pass on the merged `main` commit.
 
 ## [0.6.3] - 2026-07-31
 

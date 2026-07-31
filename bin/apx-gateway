@@ -164,11 +164,16 @@ def _safe_proxy_request_path(raw_path: str) -> str | None:
     if not raw_path or not raw_path.startswith("/") or raw_path.startswith("//"):
         return None
     decoded = raw_path
-    for _ in range(3):
+    # Decode nested escapes to a fixed point. Reject excessive nesting after a
+    # constant work bound instead of allowing it through or doing quadratic
+    # work on an attacker-controlled request target.
+    for _ in range(8):
         next_decoded = unquote(decoded)
         if next_decoded == decoded:
             break
         decoded = next_decoded
+    else:
+        return None
     path_only = decoded.split("?", 1)[0]
     if (
         path_only.startswith("//")

@@ -17,6 +17,7 @@
   let error = "";
   let summaryError = false;
   let showAllSignals = false;
+  /** @type {Date | null} */ let lastUpdated = null;
   let viewValue = "overview";
   /** @type {HTMLElement | undefined} */ let tokenTarget;
   /** @type {HTMLElement | undefined} */ let savingsTarget;
@@ -35,8 +36,6 @@
     const amount = Number(value || 0);
     return amount >= 1_048_576 ? `${(amount / 1_048_576).toFixed(1)} MB` : `${(amount / 1024).toFixed(1)} KB`;
   };
-  /** @param {unknown} numerator @param {unknown} denominator */
-  const percentage = (numerator, denominator) => Number(denominator || 0) ? `${(Number(numerator || 0) / Number(denominator) * 100).toFixed(0)}%` : "not measured";
   /** @param {string} value */
   const bucketFor = (value) => ["7d", "30d"].includes(value) ? "1h" : "1m";
   /** @param {string} optimizer */
@@ -171,6 +170,7 @@
       });
       summaryError = failed.includes("usage");
       error = failed.length ? `Some data is temporarily unavailable: ${failed.join(", ")}` : "";
+      lastUpdated = new Date();
       await tick();
       syncPlots();
     } catch (cause) {
@@ -214,12 +214,12 @@
   $: optimizerReported = latestOptimizerSnapshots.map((snapshot) => {
     const normalized = snapshot.normalized || {};
     if (snapshot.optimizer === "headroom") {
-      return { optimizer: "headroom", saved: normalized.tokens_saved_lifetime, rate: normalized.savings_pct_session, requests: normalized.requests_total, usd: normalized.usd_saved_lifetime };
+      return { optimizer: "headroom", saved: normalized.tokens_saved_lifetime ?? null, rate: normalized.savings_pct_session ?? null, requests: normalized.requests_total ?? null, usd: normalized.usd_saved_lifetime ?? null };
     }
     if (snapshot.optimizer === "pxpipe") {
-      return { optimizer: "pxpipe", saved: normalized.saved_input_tokens, rate: normalized.saved_pct_of_all_spend || normalized.saved_pct_input_only, requests: normalized.requests_total, usd: normalized.saved_usd };
+      return { optimizer: "pxpipe", saved: normalized.saved_input_tokens ?? null, rate: (normalized.saved_pct_of_all_spend || normalized.saved_pct_input_only) ?? null, requests: normalized.requests_total ?? null, usd: normalized.saved_usd ?? null };
     }
-    return { optimizer: snapshot.optimizer, saved: normalized.total_saved_tokens, rate: normalized.savings_pct, requests: normalized.requests_total, usd: null };
+    return { optimizer: snapshot.optimizer, saved: normalized.total_saved_tokens ?? null, rate: normalized.savings_pct ?? null, requests: normalized.requests_total ?? null, usd: null };
   });
   $: optimizerMetrics = efficiency.optimizers || [];
   $: observed = efficiency.observed || {};
@@ -233,6 +233,11 @@
   $: verifiedSaved = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.measured_tokens_saved || 0), 0);
   $: measuredAttempts = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.measured_attempts || 0), 0);
   $: optimizerAttempts = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.attempts || 0), 0);
+  $: baselineInputTokens = Number(observed.tokens_in || 0) + verifiedSaved;
+  $: verifiedReductionRate = baselineInputTokens > 0 ? verifiedSaved / baselineInputTokens * 100 : null;
+  $: evidenceCoverageRate = optimizerAttempts > 0 ? measuredAttempts / optimizerAttempts * 100 : null;
+  $: sentInputShare = baselineInputTokens > 0 ? Number(observed.tokens_in || 0) / baselineInputTokens * 100 : 0;
+  $: savedInputShare = baselineInputTokens > 0 ? verifiedSaved / baselineInputTokens * 100 : 0;
   $: failures = Number(summary.totals?.err_5xx || 0) + Number(summary.totals?.warn_4xx || 0);
   $: hasRequestData = !!summary.totals;
   $: requestHealth = summaryError
@@ -242,7 +247,17 @@
       : failures
         ? `${number(failures)} issue${failures === 1 ? "" : "s"}`
         : "Healthy";
-  $: visibleAlerts = showAllSignals ? (attention.alerts || []) : (attention.alerts || []).slice(0, 3);
+  $: visibleAlerts = showAllSignals ? (attention.alerts || []) : (attention.alerts || []).slice(0, 1);
+  $: optimizerNames = [...new Set([
+    ...latestOptimizerSnapshots.map((snapshot) => snapshot.optimizer),
+    ...optimizerMetrics.map((optimizer) => optimizer.optimizer),
+  ])];
+  $: optimizerViews = optimizerNames.map((name) => ({
+    name,
+    snapshot: latestOptimizerSnapshots.find((snapshot) => snapshot.optimizer === name),
+    reported: optimizerReported.find((optimizer) => optimizer.optimizer === name),
+    measurement: optimizerMetrics.find((optimizer) => optimizer.optimizer === name),
+  }));
 
 </script>
 
@@ -252,9 +267,12 @@
       <p class="eyebrow">LeanRelay · token efficiency</p>
       <h2>{viewValue === "overview" ? "Token efficiency overview" : viewValue === "optimizers" ? "Optimizer details" : "Persisted activity"}</h2>
     </div>
-    <span aria-live="polite" class:ok={!loading && !error} class:warn={loading || (!!error && hasRequestData)} class:fail={!!error && !hasRequestData} class="status">
-      {error ? "partial data" : loading ? "refreshing" : `last ${windowValue}`}
-    </span>
+    <div class="refresh-state">
+      <span aria-live="polite" class:ok={!loading && !error} class:warn={loading || (!!error && hasRequestData)} class:fail={!!error && !hasRequestData} class="status">
+        {error ? "partial data" : loading ? "refreshing" : lastUpdated ? `updated ${lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "ready"}
+      </span>
+      <button class="refresh-button" type="button" disabled={loading} onclick={refresh} aria-label="Refresh dashboard data">Refresh</button>
+    </div>
   </div>
 
   {#if error}
@@ -268,26 +286,6 @@
   </div>
 
   {#if viewValue === "overview"}
-  <div class="attention">
-    <div class="attention-heading"><h3>Needs attention</h3><span class:ok={!attention.alerts?.length} class:warn={attention.alerts?.some((alert) => alert.severity === "warning")} class:fail={attention.alerts?.some((alert) => alert.severity === "critical")} class="status">{attention.alerts?.length || 0} signals</span></div>
-    {#if attention.alerts?.length}
-      <div class="attention-list">
-        {#each visibleAlerts as alert (alert.id)}
-          <article class:critical={alert.severity === "critical"} class:warning={alert.severity === "warning"} class="signal">
-            <strong>{alert.title}</strong><small>{alert.detail}</small><em>Next: {alert.action}</em>
-          </article>
-        {/each}
-      </div>
-      {#if attention.alerts.length > 3}
-        <button class="signals-toggle" type="button" aria-expanded={showAllSignals} onclick={() => showAllSignals = !showAllSignals}>
-          {showAllSignals ? "Show fewer signals" : `Show ${attention.alerts.length - 3} more signal${attention.alerts.length - 3 === 1 ? "" : "s"}`}
-        </button>
-      {/if}
-    {:else}
-      <p class="clear">No active signals in this window.</p>
-    {/if}
-  </div>
-
   {#if hasRequestData && Number(totals.requests || 0) === 0}
     <div class="empty-state">
       <strong>No requests in the last {windowValue}.</strong>
@@ -296,10 +294,52 @@
   {/if}
 
   <div class="metrics" aria-label="Token efficiency summary">
-    <article><span>Tokens processed</span><strong>{number(totalTokens)}<em class="metric-unit">&nbsp;tokens</em></strong><small>Observed in this window: {number(observed.tokens_in)} input + {number(observed.tokens_out)} output</small></article>
-    <article class="token-card"><span>Verified tokens saved</span><strong>{number(verifiedSaved)}<em class="metric-unit">&nbsp;tokens</em></strong><small>Input tokens removed with matching per-request before/after evidence</small></article>
-    <article><span>Savings coverage</span><strong>{percentage(measuredAttempts, optimizerAttempts)}</strong><small>{number(measuredAttempts)} of {number(optimizerAttempts)} optimizer attempts verified</small></article>
+    <article><span>Tokens processed</span><strong>{number(totalTokens)}<em class="metric-unit">&nbsp;tokens</em></strong><small>Actually sent: {number(observed.tokens_in)} input + {number(observed.tokens_out)} output</small></article>
+    <article class="token-card"><span>Verified input saved</span><strong>{number(verifiedSaved)}<em class="metric-unit">&nbsp;tokens</em></strong><small>Removed before the model with matching before/after evidence</small></article>
+    <article><span>Verified input reduction</span><strong>{verifiedReductionRate == null ? "not measured" : `${verifiedReductionRate.toFixed(1)}%`}</strong><small>{number(verifiedSaved)} removed from {number(baselineInputTokens)} baseline input tokens</small></article>
     <article><span>Request health</span><strong class:healthy={hasRequestData && failures === 0 && !summaryError}>{requestHealth}</strong><small>{number(summary.totals?.requests)} requests · p95 {ms(summary.latency_ms?.p95)}</small></article>
+  </div>
+
+  <article class="token-journey" aria-label="Verified input token journey">
+    <div class="journey-heading">
+      <div><h3>Verified input journey</h3><small>Actual model input plus verified removals; estimates are excluded</small></div>
+      <span class="status">{windowValue}</span>
+    </div>
+    <div class="journey-values">
+      <div><span>Verified baseline input</span><strong>{number(baselineInputTokens)}</strong><small>actual input + verified removed</small></div>
+      <span class="journey-arrow" aria-hidden="true">→</span>
+      <div><span>Sent to model</span><strong>{number(observed.tokens_in)}</strong><small>{baselineInputTokens ? `${sentInputShare.toFixed(1)}% of baseline` : "not observed"}</small></div>
+      <span class="journey-plus" aria-hidden="true">+</span>
+      <div class="journey-saved"><span>Removed</span><strong>{number(verifiedSaved)}</strong><small>{baselineInputTokens ? `${savedInputShare.toFixed(1)}% verified reduction` : "not measured"}</small></div>
+    </div>
+    <div class="journey-track" aria-hidden="true">
+      <span class="journey-sent" style={`width:${sentInputShare}%`}></span>
+      <span class="journey-removed" style={`width:${savedInputShare}%`}></span>
+    </div>
+    <p class="journey-evidence">
+      Evidence coverage: <strong>{evidenceCoverageRate == null ? "not measured" : `${evidenceCoverageRate.toFixed(0)}%`}</strong>
+      · {number(measuredAttempts)} of {number(optimizerAttempts)} optimizer attempts supplied valid before/after token counts.
+    </p>
+  </article>
+
+  <div class:has-signals={attention.alerts?.length} class="attention">
+    <div class="attention-heading"><h3>{attention.alerts?.length ? "Needs attention" : "No action needed"}</h3><span class:ok={!attention.alerts?.length} class:warn={attention.alerts?.some((alert) => alert.severity === "warning")} class:fail={attention.alerts?.some((alert) => alert.severity === "critical")} class="status">{attention.alerts?.length || 0} signals</span></div>
+    {#if attention.alerts?.length}
+      <div class="attention-list">
+        {#each visibleAlerts as alert (alert.id)}
+          <article class:critical={alert.severity === "critical"} class:warning={alert.severity === "warning"} class="signal">
+            <strong>{alert.title}</strong><small>{alert.detail}</small><em>Next: {alert.action}</em>
+          </article>
+        {/each}
+      </div>
+      {#if attention.alerts.length > 1}
+        <button class="signals-toggle" type="button" aria-expanded={showAllSignals} onclick={() => showAllSignals = !showAllSignals}>
+          {showAllSignals ? "Show only the first signal" : `Review all ${attention.alerts.length} signals`}
+        </button>
+      {/if}
+    {:else}
+      <p class="clear">Requests and optimizers show no active warning signals in this window.</p>
+    {/if}
   </div>
 
   <div class="context-strip" aria-label="Usage context">
@@ -315,58 +355,51 @@
   </div>
 
   {:else if viewValue === "optimizers"}
-  <div class="optimizer-grid">
-    <article class="optimizer-health reported-savings">
-      <div class="attention-heading"><h3>Optimizer-reported savings</h3><span class="status">native counters</span></div>
-      <p class="section-note">Aggregate optimizer counters are shown separately from request-level verified savings.</p>
-      {#if optimizerReported.length}
-        <div class="health-list">
-          {#each optimizerReported as optimizer (optimizer.optimizer)}
-            <div class="health-row">
-              <strong>{optimizer.optimizer}</strong><span>{number(optimizer.saved)} tokens</span>
-              <small>{Number(optimizer.rate || 0).toFixed(1)}% reported savings · {number(optimizer.requests)} requests{optimizer.usd == null ? "" : ` · ${money(optimizer.usd)}`}</small>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <p class="clear">No persisted optimizer counters in this window yet.</p>
-      {/if}
-    </article>
-    <article class="optimizer-health">
-      <div class="attention-heading"><h3>Optimizer health</h3><span class="status">{latestOptimizerSnapshots.length} tracked</span></div>
-      {#if latestOptimizerSnapshots.length}
-        <div class="health-list">
-          {#each latestOptimizerSnapshots as snapshot (snapshot.optimizer)}
-            {@const destination = optimizerDestination(snapshot.optimizer)}
-            <div class:up={snapshot.reachable} class:down={!snapshot.reachable} class="health-row">
-              <strong>{snapshot.optimizer}</strong><span>{snapshot.reachable ? "reachable" : "unreachable"}</span>
-              <small>
-                last checked {new Date(Number(snapshot.ts || 0) * 1000).toLocaleString()}
-                {#if destination}
-                  · <a class="optimizer-link" href={destination.href} target="_blank" rel="noopener">{destination.label}</a>
-                {/if}
-              </small>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <p class="clear">No optimizer snapshots in this window yet.</p>
-      {/if}
-    </article>
-    <article class="optimizer-health">
-      <div class="attention-heading"><h3>Measurement confidence</h3><span class:ok={efficiency.durable} class:warn={!efficiency.durable} class="status">{efficiency.durable ? "durable" : "not persistent"}</span></div>
-      {#if optimizerMetrics.length}
-        <div class="health-list">
-          {#each optimizerMetrics as optimizer (optimizer.optimizer)}
-            <div class="health-row">
-              <strong>{optimizer.optimizer}</strong><span>{number(optimizer.measured_attempts)}/{number(optimizer.attempts)} verified</span><small>{number(optimizer.estimated_attempts)} estimated · {number(optimizer.unavailable_attempts)} unavailable</small>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <p class="clear">No optimizer attempts in this window yet. {efficiency.note || "Savings will appear only when adapters emit measurements."}</p>
-      {/if}
-    </article>
+  <div class="optimizer-overview" aria-label="Optimizer measurement summary">
+    <div><span>Verified savings this window</span><strong>{number(verifiedSaved)} tokens</strong><small>Request-level before/after evidence</small></div>
+    <div><span>Evidence coverage</span><strong>{evidenceCoverageRate == null ? "not measured" : `${evidenceCoverageRate.toFixed(0)}%`}</strong><small>{number(measuredAttempts)} of {number(optimizerAttempts)} attempts verified</small></div>
+    <div><span>Persistence</span><strong>{efficiency.durable ? "Durable" : "Unavailable"}</strong><small>{efficiency.durable ? "Measurements survive restarts" : efficiency.note || "SQLite metrics unavailable"}</small></div>
+  </div>
+  <p class="optimizer-explainer">Verified savings below is scoped to the selected window. Native counters are optimizer-reported totals and may cover a longer lifetime, so they are deliberately labeled separately.</p>
+  <div class="optimizer-cards">
+    {#if optimizerViews.length}
+      {#each optimizerViews as optimizer (optimizer.name)}
+        {@const destination = optimizerDestination(optimizer.name)}
+        {@const attempts = Number(optimizer.measurement?.attempts || 0)}
+        {@const measured = Number(optimizer.measurement?.measured_attempts || 0)}
+        {@const coverage = attempts ? measured / attempts * 100 : null}
+        <article class:down={optimizer.snapshot && !optimizer.snapshot.reachable} class="optimizer-card">
+          <div class="optimizer-card-heading">
+            <div><p class="optimizer-name">{optimizer.name}</p><small>{optimizer.snapshot?.reachable ? optimizer.reported?.saved == null ? "Connected; native counters unavailable" : "Connected and reporting" : optimizer.snapshot ? "Not reachable at last check" : "No health snapshot in this window"}</small></div>
+            <span class:ok={optimizer.snapshot?.reachable} class:warn={!optimizer.snapshot} class:fail={optimizer.snapshot && !optimizer.snapshot.reachable} class="status">{optimizer.snapshot?.reachable ? "reachable" : optimizer.snapshot ? "unreachable" : "not checked"}</span>
+          </div>
+          <div class="optimizer-primary">
+            <div><span>Verified this window</span><strong>{optimizer.measurement ? number(optimizer.measurement.measured_tokens_saved) : "no attempts"} {#if optimizer.measurement}<em>tokens</em>{/if}</strong></div>
+            <div><span>Native reported total</span><strong class:unavailable={optimizer.reported?.saved == null}>{optimizer.reported?.saved == null ? "not reported" : number(optimizer.reported.saved)} {#if optimizer.reported?.saved != null}<em>tokens</em>{/if}</strong></div>
+          </div>
+          <div class="coverage-row">
+            <div><span>Evidence coverage</span><strong>{coverage == null ? "not measured" : `${coverage.toFixed(0)}%`}</strong></div>
+            <div class="coverage-track" aria-hidden="true"><span style={`width:${coverage || 0}%`}></span></div>
+            <small>{number(measured)} verified · {number(optimizer.measurement?.estimated_attempts)} estimated · {number(optimizer.measurement?.unavailable_attempts)} unavailable</small>
+          </div>
+          <dl class="optimizer-facts">
+            <div><dt>Native reduction</dt><dd>{optimizer.reported?.rate == null ? "not reported" : `${Number(optimizer.reported.rate).toFixed(1)}%`}</dd></div>
+            <div><dt>Native requests</dt><dd>{optimizer.reported?.requests == null ? "not reported" : number(optimizer.reported.requests)}</dd></div>
+            <div><dt>Optimizer latency</dt><dd>{optimizer.measurement?.optimizer_latency_avg_ms == null ? "not measured" : ms(optimizer.measurement.optimizer_latency_avg_ms)}</dd></div>
+            <div><dt>Native cost saved</dt><dd>{optimizer.reported?.usd == null ? "not reported" : money(optimizer.reported.usd)}</dd></div>
+          </dl>
+          {#if optimizer.measurement?.bypass_reasons?.length}
+            <p class="bypass-note">Top bypass: {optimizer.measurement.bypass_reasons[0].reason} ({number(optimizer.measurement.bypass_reasons[0].count)})</p>
+          {/if}
+          <div class="optimizer-card-footer">
+            <small>{optimizer.snapshot ? `Checked ${new Date(Number(optimizer.snapshot.ts || 0) * 1000).toLocaleString()}` : "No health snapshot yet"}</small>
+            {#if destination}<a class="optimizer-link" href={destination.href} target="_blank" rel="noopener">{destination.label} <span aria-hidden="true">↗</span></a>{/if}
+          </div>
+        </article>
+      {/each}
+    {:else}
+      <article><p class="clear">No optimizer activity or health snapshots in this window yet.</p></article>
+    {/if}
   </div>
 
   {:else}
@@ -393,7 +426,13 @@
       {#if sessions.length}
         <div class="health-list">
           {#each sessions as session (session.session_id)}
-            <div class="health-row session-row"><strong title={session.session_id}>{session.last_model || "unknown model"}</strong><span>{number(session.requests)} requests</span><small>{session.chain_mode || "direct"} · {number(Number(session.tokens_in || 0) + Number(session.tokens_out || 0))} tokens · {money(session.cost_usd)}</small></div>
+            <div class="health-row session-row">
+              <strong title={session.session_id}>{session.last_model || "unknown model"}</strong><span>{number(session.requests)} requests</span>
+              <small>
+                {session.chain_mode || "direct"} · {number(Number(session.tokens_in || 0) + Number(session.tokens_out || 0))} processed
+                · {number(session.measured_tokens_saved)} verified saved · {money(session.cost_usd)}
+              </small>
+            </div>
           {/each}
         </div>
       {:else}

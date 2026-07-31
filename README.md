@@ -142,11 +142,13 @@ apx optimizer              # see source and ownership before changing an optimiz
 ```
 
 Open the dashboard, make a few normal model requests, then choose a time
-window. Start with **Needs Attention**: it tells you whether an optimizer is
-unreachable, telemetry is incomplete, or a traffic comparison needs review.
-Then use **Tokens processed**, **Verified tokens saved**, and **Savings
-coverage**. Do not treat an empty savings value as zero savings—it usually
-means the optimizer did not supply per-request measurements.
+window. Start with **Tokens processed**, **Verified input saved**, and
+**Verified input reduction**, then use the **Verified input journey** to see
+the conservative baseline, what reached the model, and what was removed.
+**Evidence coverage** says how many optimizer attempts support that claim.
+Review **Needs Attention** for unreachable optimizers or incomplete telemetry.
+Do not treat an unmeasured savings value as zero savings—it usually means the
+optimizer did not supply per-request measurements.
 
 Use these safe controls for common changes; they persist through service
 restart and supported service backends:
@@ -346,13 +348,17 @@ Disable the dashboard entirely by setting `APX_DASHBOARD_ENABLED=0` in `~/.confi
 
 ### Reading savings and restart-safe data
 
-For a first check, choose a time window, open **Needs Attention**, then inspect
-**Tokens processed**, **Verified tokens saved**, and **Savings coverage**.
+For a first check, choose a time window, then inspect **Tokens processed**,
+**Verified input saved**, **Verified input reduction**, and the **Verified
+input journey**.
 Every token total is displayed with an explicit `tokens` unit. **Tokens
 processed** is input plus output tokens observed by the gateway in the selected
 window; it is not a request count and compact suffixes are not used. **Verified
-tokens saved** is the number of input tokens removed by optimizers where
-request-level before/after measurements agree.
+input saved** is the number of input tokens removed by optimizers where
+request-level before/after measurements agree. The journey's verified baseline
+is observed input plus that verified removal. **Verified input reduction** is
+verified removal divided by the verified baseline; **Evidence coverage** is a
+different value—the share of optimizer attempts with valid measurements.
 Only `measured` savings have explicit per-request before/after evidence;
 `estimated` values remain separate, and `unavailable` means apx has no basis
 to claim savings. Request history, sessions, optimizer attempts, and health

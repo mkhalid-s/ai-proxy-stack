@@ -39,7 +39,7 @@ const fixture = {
       { ts: 1_700_000_000, optimizer: "squeezr", reachable: true, normalized: {} },
     ],
   },
-  sessions: { sessions: [{ session_id: "session-1", last_model: "claude-sonnet-5", chain_mode: "headroom", requests: 12, tokens_in: 1200, tokens_out: 300, cost_usd: 0.0425 }] },
+  sessions: { sessions: [{ session_id: "session-1", last_model: "claude-sonnet-5", chain_mode: "headroom", requests: 12, tokens_in: 1200, tokens_out: 300, cost_usd: 0.0425, optimizer_attempts: 4, measured_tokens_saved: 300, measured_attempts: 3, unavailable_attempts: 0 }] },
   operations: { durable: true, requests: 240, db_size_bytes: 524288, retention_days: 30 },
 };
 
@@ -85,19 +85,25 @@ test("renders a focused, responsive token-efficiency overview", async ({ page },
   expect((await cssResponse).status()).toBe(200);
   await expect(page.getByRole("heading", { name: "Token efficiency overview" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByText("Verified tokens saved")).toBeVisible();
+  await expect(page.getByText("Verified input saved")).toBeVisible();
   await expect(page.getByText("Tokens processed")).toBeVisible();
-  await expect(page.getByText("Savings coverage")).toBeVisible();
+  await expect(page.getByText("Verified input reduction")).toBeVisible();
   await expect(page.getByText("Request health")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Verified input journey" })).toBeVisible();
+  await expect(page.getByText("Verified baseline input", { exact: true })).toBeVisible();
+  await expect(page.getByText("20.0% verified reduction")).toBeVisible();
+  await expect(page.getByText(/3 of 4 optimizer attempts supplied valid/)).toBeVisible();
   await expect(page.getByText("Advanced operational details")).toHaveCount(0);
   await expect(page.locator(".token-card strong")).toHaveText("300 tokens");
   await expect(page.locator("main")).toBeVisible();
   await expect(page.locator("#svelte-overview > .loading")).toHaveCount(0);
   await expect(page.locator("label[for='window-select']")).toBeVisible();
   await expect(page.getByRole("img", { name: /Token flow over 1h/ })).toBeVisible();
-  await expect(page.getByText("Repeated failures")).toHaveCount(0);
-  await page.getByRole("button", { name: "Show 1 more signal" }).click();
+  await expect(page.getByText("Savings unavailable")).toHaveCount(0);
+  await page.getByRole("button", { name: "Review all 4 signals" }).click();
   await expect(page.getByText("Repeated failures")).toBeVisible();
+  await page.getByRole("button", { name: "Show only the first signal" }).click();
+  await expect(page.getByText("Repeated failures")).toHaveCount(0);
 
   const desktopLayout = await page.evaluate(() => {
     const metrics = document.querySelector(".metrics");
@@ -121,17 +127,20 @@ test("renders a focused, responsive token-efficiency overview", async ({ page },
 
   await page.getByRole("tab", { name: "Optimizers" }).click();
   await expect(page.getByRole("heading", { name: "Optimizer details" })).toBeVisible();
+  await expect(page.getByText("Verified savings this window")).toBeVisible();
+  await expect(page.locator(".optimizer-overview").getByText("75%")).toBeVisible();
   await expect(page.getByText("840 tokens")).toBeVisible();
-  await expect(page.locator("a[href='/proxy/headroom']")).toHaveText("Open dashboard");
-  await expect(page.locator("a[href='/proxy/pxpipe/']")).toHaveText("Open dashboard");
-  await expect(page.locator("a[href='/proxy/squeezr/']")).toHaveText("Open dashboard");
+  await expect(page.locator("a[href='/proxy/headroom']")).toContainText("Open dashboard");
+  await expect(page.locator("a[href='/proxy/pxpipe/']")).toContainText("Open dashboard");
+  await expect(page.locator("a[href='/proxy/squeezr/']")).toContainText("Open dashboard");
   await expect(page.locator(".metrics")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("dashboard-optimizers.png"), fullPage: true });
 
   await page.getByRole("tab", { name: "Activity" }).click();
   await expect(page.getByRole("heading", { name: "Persisted activity" })).toBeVisible();
   await expect(page.getByText("240 requests stored")).toBeVisible();
-  await expect(page.locator(".optimizer-grid")).toHaveCount(0);
+  await expect(page.getByText(/300 verified saved/)).toBeVisible();
+  await expect(page.locator(".optimizer-cards")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("dashboard-activity.png"), fullPage: true });
 
   await page.locator("#window-select").selectOption("6h");
@@ -142,7 +151,7 @@ test("renders a focused, responsive token-efficiency overview", async ({ page },
   await expect(page.getByRole("img", { name: /Token flow over 6h/ })).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByText("Verified tokens saved")).toBeVisible();
+  await expect(page.getByText("Verified input saved")).toBeVisible();
   await expect.poll(() => page.evaluate(() => [...document.querySelectorAll(".plot")].every((plot) => {
     const rendered = plot.querySelector(".uplot");
     return !rendered || rendered.getBoundingClientRect().width <= plot.getBoundingClientRect().width + 1;
@@ -170,7 +179,7 @@ test("labels unavailable request data without claiming the gateway is healthy", 
   await page.goto(baseURL);
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
-  await expect(page.getByText("Verified tokens saved")).toBeVisible();
+  await expect(page.getByText("Verified input saved")).toBeVisible();
   await page.getByRole("tab", { name: "Optimizers" }).click();
   await expect(page.getByText("840 tokens")).toBeVisible();
 });

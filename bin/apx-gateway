@@ -2677,7 +2677,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if not self._authorized_for_dashboard(allow_query=False):
                 self._require_token()
                 return True
-            self._passthrough(SQUEEZR_URL, path[len("/proxy/squeezr"):] or "/squeezr/dashboard", passthrough_query, prefix="/proxy/squeezr")
+            sub_path = path[len("/proxy/squeezr"):]
+            if sub_path in {"", "/"}:
+                sub_path = "/squeezr/dashboard"
+            self._passthrough(
+                SQUEEZR_URL,
+                sub_path,
+                passthrough_query,
+                prefix="/proxy/squeezr",
+            )
             return True
 
         if path.startswith("/assets/"):
@@ -2868,6 +2876,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
         }
         for old, new in replacements.items():
             text = text.replace(old, new)
+        # HTMX keeps request URLs in attributes rather than href/action. Native
+        # optimizer dashboards commonly return further HTMX-enabled fragments,
+        # so these must be rewritten on every proxied HTML response. Match the
+        # complete attribute name to avoid rewriting data-hx-* values twice.
+        htmx_path = re.compile(
+            r"(?P<attribute>(?:data-)?hx-(?:get|post|put|patch|delete))="
+            r"(?P<quote>[\"'])/",
+            re.IGNORECASE,
+        )
+        text = htmx_path.sub(
+            lambda match: (
+                f"{match.group('attribute')}={match.group('quote')}{prefix}/"
+            ),
+            text,
+        )
         return text.encode("utf-8")
 
     def _passthrough(self, base_url: str, sub_path: str, query: str, prefix: str = "") -> None:
@@ -2882,7 +2905,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
         conn = conn_cls(target.netloc, timeout=REQUEST_TIMEOUT)
         try:
             headers = {}
-            for key in ("accept", "user-agent"):
+            for key in (
+                "accept",
+                "content-type",
+                "user-agent",
+                "hx-request",
+                "hx-current-url",
+                "hx-target",
+                "hx-trigger",
+                "hx-trigger-name",
+            ):
                 if key in self.headers:
                     headers[key] = self.headers[key]
             headers["Accept-Encoding"] = "identity"

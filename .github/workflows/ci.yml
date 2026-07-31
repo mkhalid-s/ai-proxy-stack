@@ -180,6 +180,7 @@ jobs:
           class ToolProxy(BaseHTTPRequestHandler):
               last_path = ""
               last_method = ""
+              last_content_type = ""
               def do_GET(self):
                   self._reply()
 
@@ -189,9 +190,17 @@ jobs:
               def _reply(self):
                   ToolProxy.last_path = self.path
                   ToolProxy.last_method = self.command
+                  ToolProxy.last_content_type = self.headers.get("content-type", "")
                   n = int(self.headers.get("content-length", "0") or "0")
                   self.rfile.read(n)
-                  body = b"<html><script>fetch('/api/stats.json')</script></html>"
+                  body = (
+                      b'<html><link rel="icon" href="/favicon.svg">'
+                      b'<script>fetch("/api/stats.json");'
+                      b'new EventSource("/events")</script>'
+                      b'<div hx-get="/fragments/models"></div>'
+                      b'<button hx-post="/fragments/toggle"></button>'
+                      b'<div data-hx-get="/fragments/recent"></div></html>'
+                  )
                   self.send_response(200)
                   self.send_header("content-type", "text/html; charset=utf-8")
                   self.send_header("content-length", str(len(body)))
@@ -233,6 +242,7 @@ jobs:
               if tool_url:
                   env["APX_HEADROOM_URL"] = tool_url
                   env["APX_PXPIPE_URL"] = tool_url
+                  env["APX_SQUEEZR_URL"] = tool_url
               if body_cap:
                   env["APX_CAPTURE_BODY_CAP"] = body_cap
               return subprocess.Popen(["python", "bin/apx-gateway"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -296,13 +306,40 @@ jobs:
                   with opener.open(req, timeout=5) as r:
                       html = r.read().decode("utf-8")
                       assert "/proxy/pxpipe/api/stats.json" in html
+                      assert 'hx-get="/proxy/pxpipe/fragments/models"' in html
+                      assert 'hx-post="/proxy/pxpipe/fragments/toggle"' in html
+                      assert 'data-hx-get="/proxy/pxpipe/fragments/recent"' in html
                   assert ToolProxy.last_method == "POST"
                   assert ToolProxy.last_path == "/api/toggle?x=1", ToolProxy.last_path
+                  assert ToolProxy.last_content_type == "application/json"
+                  req = urllib.request.Request(
+                      f"http://127.0.0.1:{GATEWAY_PORT}/proxy/pxpipe/fragments/models",
+                      data=b"model=claude-opus-5&on=true",
+                      headers={
+                          "content-type": "application/x-www-form-urlencoded",
+                          "hx-request": "true",
+                          "hx-target": "frag-models",
+                      },
+                      method="POST",
+                  )
+                  with opener.open(req, timeout=5) as r:
+                      fragment = r.read().decode("utf-8")
+                      assert 'hx-get="/proxy/pxpipe/fragments/models"' in fragment
+                  assert ToolProxy.last_method == "POST"
+                  assert ToolProxy.last_path == "/fragments/models", ToolProxy.last_path
+                  assert ToolProxy.last_content_type == "application/x-www-form-urlencoded"
                   with opener.open(f"http://127.0.0.1:{GATEWAY_PORT}/proxy/headroom", timeout=5) as r:
                       html = r.read().decode("utf-8")
                       assert "/proxy/headroom/api/stats.json" in html
                   assert ToolProxy.last_method == "GET"
                   assert ToolProxy.last_path == "/dashboard", ToolProxy.last_path
+                  with opener.open(f"http://127.0.0.1:{GATEWAY_PORT}/proxy/squeezr/", timeout=5) as r:
+                      html = r.read().decode("utf-8")
+                      assert 'href="/proxy/squeezr/favicon.svg"' in html
+                      assert 'fetch("/proxy/squeezr/api/stats.json")' in html
+                      assert 'EventSource("/proxy/squeezr/events")' in html
+                  assert ToolProxy.last_method == "GET"
+                  assert ToolProxy.last_path == "/squeezr/dashboard", ToolProxy.last_path
                   remote_native = urllib.request.Request(
                       f"http://127.0.0.1:{GATEWAY_PORT}/proxy/headroom",
                       headers={"Host": "dashboard.example", "Authorization": "Bearer secret-token"},

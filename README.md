@@ -461,7 +461,7 @@ apx update
 
 or just rerun `./install.sh --yes` from the new clone.
 
-Releases are cut with `build/release.sh X.Y.Z --push --watch` or `build/release.sh --patch|--minor|--major --push --watch`. The helper verifies identity, requires a clean `main`, promotes the changelog's Unreleased notes, updates `VERSION`, validates, commits `Release X.Y.Z`, tags `vX.Y.Z`, pushes, and waits for the GitHub Release workflow. Use `--dry-run` to preview the next release without modifying files; use `--allow-empty-notes` only for intentional metadata-only releases. Every tagged build publishes both a source tarball and a self-extracting `apx.sh` (plus `apx.sh.sha256`) at [Releases](https://github.com/mkhalid-s/lean-relay/releases).
+Releases are cut with `build/release.sh X.Y.Z --push --watch` or `build/release.sh --patch|--minor|--major --push --watch`. The helper verifies identity, requires a clean `main`, promotes the changelog's Unreleased notes, updates `VERSION`, validates, commits `Release X.Y.Z`, pushes that exact commit, and requires its complete CI run to pass before creating or pushing `vX.Y.Z`. The tag-triggered release repeats the complete CI suite before publishing and `--watch` waits for that workflow. Use `--dry-run` to preview the next release without modifying files; use `--allow-empty-notes` only for intentional metadata-only releases. Every successful tagged build publishes both a source tarball and a self-extracting `apx.sh` (plus `apx.sh.sha256`) at [Releases](https://github.com/mkhalid-s/lean-relay/releases).
 
 ## Claude Code Setting
 

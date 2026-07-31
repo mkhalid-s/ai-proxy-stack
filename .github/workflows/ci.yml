@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 # Cancel in-progress runs on the same branch/PR when new commits are pushed.
 concurrency:
@@ -442,10 +443,16 @@ jobs:
                       assert r.headers.get("x-apx-request-id")
                       assert r.headers.get("x-apx-session-id")
                       r.read()
-                  time.sleep(0.3)
-                  row = sqlite3.connect(db).execute(
-                      "select status,tokens_in,tokens_out,cache_read_tokens,cache_write_tokens,tool_call_count,request_body,response_body,path from requests"
-                  ).fetchone()
+                  deadline = time.monotonic() + 5
+                  row = None
+                  while row is None and time.monotonic() < deadline:
+                      with sqlite3.connect(db) as connection:
+                          row = connection.execute(
+                              "select status,tokens_in,tokens_out,cache_read_tokens,cache_write_tokens,tool_call_count,request_body,response_body,path from requests"
+                          ).fetchone()
+                      if row is None:
+                          time.sleep(0.05)
+                  assert row is not None, "request metrics were not persisted within 5 seconds"
                   assert row[:6] == (200, 123, 45, 10, 5, 1), row
                   assert row[6] is None and row[7] is None, row
                   assert row[8].endswith("api_key=REDACTED"), row

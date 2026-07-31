@@ -13,10 +13,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ── 1) Sanity: tag matches VERSION, and the code passes lint + pack. ─────
-  #      We deliberately re-run the CI-equivalent checks in the release
-  #      pipeline so a tag push can never publish an artifact that would fail
-  #      CI on main.
+  # Run the complete CI suite from this exact tag. Keeping CI reusable makes
+  # it impossible for the release gate to silently drift to a smaller subset.
+  full-ci:
+    name: Full CI gate
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  # ── 1) Sanity: tag matches VERSION and fast lint checks pass. ──────────
+  #      The reusable full-ci job above is the authoritative release gate;
+  #      these cheap checks keep tag/version failures easy to diagnose.
   verify:
     name: Verify tag and lint
     runs-on: ubuntu-latest
@@ -58,7 +65,7 @@ jobs:
   # ── 2) Build all artifacts: source tarball + self-extracting apx.sh ──────
   build:
     name: Build release artifacts
-    needs: verify
+    needs: [full-ci, verify]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

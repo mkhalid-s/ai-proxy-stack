@@ -16,16 +16,17 @@ Steps:
   2. Move CHANGELOG.md [Unreleased] notes into VERSION's dated section.
   3. Update VERSION.
   4. Run release validations and build dist/apx.sh.
-  5. Commit "Release VERSION" and create tag "vVERSION".
-  6. With --push, push main and the tag. With --watch, wait for release.yml.
+  5. Commit "Release VERSION".
+  6. With --push, push main and require full CI on the exact release commit.
+  7. Create tag "vVERSION" only after CI passes, then optionally watch release.yml.
 
 Options:
   --patch|--minor|--major  Compute the next version from VERSION.
   --dry-run                Print intended actions without modifying files.
   --allow-empty-notes      Allow releasing with an empty Unreleased changelog.
   --skip-tests             Skip lifecycle tests; still runs syntax/package checks.
-  --push                   Push main and the release tag.
-  --watch                  Push and wait for the release workflow.
+  --push                   Push main, require full CI, then push the release tag.
+  --watch                  Also wait for the gated release workflow to publish.
 
 Identity defaults protect this repo's personal-account release flow:
   APX_RELEASE_GH_USER=mkhalid-s
@@ -200,7 +201,7 @@ if [[ "$dry_run" == "1" ]]; then
   echo "  commit:       Release $version"
   echo "  tag:          $tag"
   if [[ "$push" == "1" ]]; then
-    echo "  push:         origin main and $tag"
+    echo "  push:         origin main, require exact-SHA CI, then origin $tag"
   else
     echo "  push:         no"
   fi
@@ -242,18 +243,49 @@ run_validations
 
 git add VERSION CHANGELOG.md
 git -c commit.gpgsign=false commit -m "Release $version"
-git -c tag.gpgSign=false tag "$tag"
+head_sha="$(git rev-parse HEAD)"
 
+echo "[apx:release] prepared release commit at $(git rev-parse --short HEAD)"
+
+if [[ "$push" == "1" ]]; then
+  env -u GH_TOKEN git \
+    -c credential.helper= \
+    -c credential.helper='!gh auth git-credential' \
+    push origin main
+
+  echo "[apx:release] waiting for full CI on $head_sha before tagging"
+  ci_run_id=""
+  for _ in $(seq 1 60); do
+    ci_run_id="$(env -u GH_TOKEN gh run list --workflow ci.yml --limit 30 \
+      --json databaseId,event,headBranch,headSha \
+      --jq ".[] | select(.event == \"push\" and .headBranch == \"main\" and .headSha == \"$head_sha\") | .databaseId" \
+      | head -n 1)"
+    [[ -n "$ci_run_id" ]] && break
+    sleep 5
+  done
+  if [[ -z "$ci_run_id" ]]; then
+    echo "error: CI workflow did not appear for release commit $head_sha; tag was not created" >&2
+    exit 1
+  fi
+  if ! env -u GH_TOKEN gh run watch "$ci_run_id" --exit-status; then
+    echo "error: full CI failed for release commit $head_sha; tag was not created" >&2
+    exit 1
+  fi
+  echo "[apx:release] full CI passed for $head_sha"
+fi
+
+git -c tag.gpgSign=false tag "$tag"
 echo "[apx:release] prepared $tag at $(git rev-parse --short HEAD)"
 
 if [[ "$push" == "1" ]]; then
-  env -u GH_TOKEN git -c credential.helper='!gh auth git-credential' push origin main
-  env -u GH_TOKEN git -c credential.helper='!gh auth git-credential' push origin "$tag"
-  echo "[apx:release] pushed main and $tag"
+  env -u GH_TOKEN git \
+    -c credential.helper= \
+    -c credential.helper='!gh auth git-credential' \
+    push origin "$tag"
+  echo "[apx:release] pushed $tag"
 fi
 
 if [[ "$watch" == "1" ]]; then
-  head_sha="$(git rev-parse HEAD)"
   run_id=""
   for _ in $(seq 1 30); do
     run_id="$(env -u GH_TOKEN gh run list --workflow release.yml --limit 10 --json databaseId,headBranch,headSha --jq ".[] | select(.headBranch == \"$tag\" and .headSha == \"$head_sha\") | .databaseId" | head -n 1)"

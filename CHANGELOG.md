@@ -6,6 +6,14 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Releases now require the complete CI suite on both the exact release commit
+  and tag before publishing; a failed main-branch validation can no longer be
+  bypassed by the smaller artifact smoke suite.
+- Gateway metric persistence checks now poll with a bounded deadline, and CLI
+  advisor checks avoid `grep -q` broken-pipe races under `pipefail`.
+
 ## [0.6.2] - 2026-07-31
 
 ### Added

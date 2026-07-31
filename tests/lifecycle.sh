@@ -176,12 +176,14 @@ fi
 
 # HTTP loopback detection must compare the parsed hostname, not a URL prefix.
 "$APX" target set http://localhost.example.com --no-restart >/dev/null
-if ! "$APX" config advise --json | grep -q '"id":"insecure-upstream"'; then
+advisor_json="$("$APX" config advise --json)"
+if [[ "$advisor_json" != *'"id":"insecure-upstream"'* ]]; then
   echo "ERROR: config advisor treated a localhost-prefixed external hostname as loopback" >&2
   exit 1
 fi
 "$APX" target set http://127.0.0.1:9999 --no-restart >/dev/null
-if "$APX" config advise --json | grep -q '"id":"insecure-upstream"'; then
+advisor_json="$("$APX" config advise --json)"
+if [[ "$advisor_json" == *'"id":"insecure-upstream"'* ]]; then
   echo "ERROR: config advisor warned about an exact loopback upstream" >&2
   exit 1
 fi
@@ -496,8 +498,9 @@ EOF_CHANGELOG
   git config user.name 'Khalid Shaikh'
   git add VERSION CHANGELOG.md build/release.sh
   git -c commit.gpgsign=false commit -q -m baseline
-  bash build/release.sh --patch --dry-run > "$TMP/release-dry-run.out"
+  bash build/release.sh --patch --push --dry-run > "$TMP/release-dry-run.out"
   grep -q 'version:      1.2.3 -> 1.2.4' "$TMP/release-dry-run.out"
+  grep -q 'require exact-SHA CI' "$TMP/release-dry-run.out"
   [[ "$(head -n 1 VERSION)" == "1.2.3" ]]
   ! git rev-parse -q --verify refs/tags/v1.2.4 >/dev/null
 )

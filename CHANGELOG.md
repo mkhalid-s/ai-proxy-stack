@@ -6,6 +6,8 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-07-31
+
 ### Added
 
 - `apx` now uses restrained semantic color for interactive help, status,

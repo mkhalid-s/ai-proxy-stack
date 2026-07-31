@@ -6,6 +6,8 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-07-31
+
 ### Fixed
 
 - Releases now require the complete CI suite on both the exact release commit

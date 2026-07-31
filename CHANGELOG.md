@@ -6,6 +6,25 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `apx` now uses restrained semantic color for interactive help, status,
+  health, update, optimizer, advisor, and diagnostic output, with `NO_COLOR`
+  and `APX_COLOR` controls and plain output for pipes by default.
+
+### Changed
+
+- The dashboard now states exact input, output, verified-savings, and excluded
+  estimated-token totals for the selected window and prioritizes critical
+  attention signals.
+
+### Fixed
+
+- Proxied pxpipe and Squeezr dashboards now route root-relative fragment and
+  API requests through the correct optimizer prefix instead of returning 404s.
+- Dashboard savings labels now distinguish token counts from requests and
+  exclude estimated savings from verified totals consistently.
+
 ## [0.6.1] - 2026-07-30
 
 ### Added

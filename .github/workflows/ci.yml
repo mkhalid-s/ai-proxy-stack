@@ -73,7 +73,7 @@ jobs:
           permissions = workflow[start:end]
           required = (
               "      contents: read",
-              "      pull-requests: read",
+              "      pull-requests: write",
               "      security-events: write",
           )
           missing = [entry.strip() for entry in required if entry not in permissions]

@@ -15,9 +15,10 @@ detail at once:
    baseline, actual input sent to the model, verified input removed, and
    measurement coverage in one explanation.
 3. **Overview — Needs Attention**: a compact first signal with optional
-   expansion for outages, missing measurements, and regression flags.
+   expansion for outages, missing measurements, and regression flags. Critical
+   signals are ranked first even if an upstream response arrives unsorted.
 4. **Overview — Trends**: token flow and verified-versus-estimated savings,
-   kept separate.
+   kept separate, with exact window totals stated above each chart.
 5. **Optimizers**: one card per optimizer combining window-scoped verified
    contribution, native aggregate counters, reachability, measurement
    coverage, latency, bypasses, cost savings when reported, and the native

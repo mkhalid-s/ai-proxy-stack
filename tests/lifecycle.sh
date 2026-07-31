@@ -83,6 +83,15 @@ APX_METRICS_DB=OFF
 EOF
 
 export APX_CONFIG="$HOME/.config/apx/config.env"
+
+# Terminal color is interactive-only by default, forceable for terminals that
+# need it, and always suppressed by the NO_COLOR convention.
+plain_help="$(env -u NO_COLOR APX_COLOR=auto "$APX" help)"
+[[ "$plain_help" != *$'\033['* ]]
+forced_help="$(env -u NO_COLOR APX_COLOR=always "$APX" help)"
+[[ "$forced_help" == *$'\033['* ]]
+no_color_help="$(NO_COLOR=1 APX_COLOR=always "$APX" help)"
+[[ "$no_color_help" != *$'\033['* ]]
 export APX_STATE="$HOME/.local/state/apx"
 export APX_RUN_DIR="$TMP/run"
 # Force nohup via env override so Darwin CI cannot fall through to launchd

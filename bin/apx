@@ -1,11 +1,74 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Semantic terminal color is deliberately presentation-only. Machine-readable
+# output remains plain because auto mode requires a TTY; NO_COLOR always wins.
+APX_ANSI_RESET=$'\033[0m'
+APX_ANSI_BOLD=$'\033[1m'
+APX_ANSI_DIM=$'\033[2m'
+APX_ANSI_RED=$'\033[31m'
+APX_ANSI_GREEN=$'\033[32m'
+APX_ANSI_YELLOW=$'\033[33m'
+APX_ANSI_BLUE=$'\033[34m'
+APX_ANSI_CYAN=$'\033[36m'
+
+apx_color_enabled() {
+  local fd="${1:-1}" mode="${APX_COLOR:-auto}"
+  [[ -z "${NO_COLOR+x}" ]] || return 1
+  case "$mode" in
+    always|1|true|yes) return 0 ;;
+    never|0|false|no) return 1 ;;
+    auto|"") [[ "${TERM:-}" != "dumb" && -t "$fd" ]] ;;
+    *) [[ "${TERM:-}" != "dumb" && -t "$fd" ]] ;;
+  esac
+}
+
+apx_paint() {
+  local color="$1" text="$2" fd="${3:-1}"
+  if apx_color_enabled "$fd"; then
+    if [[ "$fd" == "2" ]]; then
+      printf '%s%s%s' "$color" "$text" "$APX_ANSI_RESET" >&2
+    else
+      printf '%s%s%s' "$color" "$text" "$APX_ANSI_RESET"
+    fi
+  elif [[ "$fd" == "2" ]]; then
+    printf '%s' "$text" >&2
+  else
+    printf '%s' "$text"
+  fi
+}
+
+apx_error() {
+  apx_paint "${APX_ANSI_BOLD}${APX_ANSI_RED}" "error:" 2
+  printf ' %s\n' "$*" >&2
+}
+
+apx_warn() {
+  apx_paint "$APX_ANSI_YELLOW" "warning:" 2
+  printf ' %s\n' "$*" >&2
+}
+
+apx_state() {
+  local state="$1" color="$APX_ANSI_DIM"
+  case "$state" in
+    ok|running|current|healthy|"up to date"|durable) color="$APX_ANSI_GREEN" ;;
+    fail|failed|stopped|unreachable|critical) color="$APX_ANSI_RED" ;;
+    warning|"update available"|partial) color="$APX_ANSI_YELLOW" ;;
+  esac
+  apx_paint "$color" "$state"
+}
+
+apx_kv() {
+  local key="$1" value="$2"
+  apx_paint "$APX_ANSI_CYAN" "$key"
+  printf ' %s\n' "$value"
+}
+
 LABEL="${APX_LABEL:-io.github.apx}"
 # LABEL is interpolated into filesystem paths (LaunchAgent plist), so refuse
 # anything that could traverse out of ~/Library/LaunchAgents.
 if [[ ! "$LABEL" =~ ^[A-Za-z0-9._-]+$ ]]; then
-  echo "apx: refusing invalid APX_LABEL: $LABEL" >&2
+  apx_error "refusing invalid APX_LABEL: $LABEL"
   echo "apx:   allowed characters: A-Z a-z 0-9 . _ -" >&2
   exit 2
 fi
@@ -65,7 +128,7 @@ ensure_runtime_dirs() {
 
 load_config() {
   if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo "missing config: $CONFIG_FILE" >&2
+    apx_error "missing config: $CONFIG_FILE"
     exit 1
   fi
   # shellcheck disable=SC1090
@@ -156,14 +219,23 @@ load_config() {
 
 now() { date '+%Y-%m-%dT%H:%M:%S%z'; }
 log() {
-  local line
-  line="[$(now)] $*"
+  local line timestamp
+  timestamp="$(now)"
+  line="[$timestamp] $*"
   # Self-heal so 'apx stop' (or any log-writer) doesn't die under set -Eeuo
   # pipefail if $LOG_DIR was manually removed between the start and stop calls.
   [[ -d "$LOG_DIR" ]] || mkdir -p "$LOG_DIR" 2>/dev/null || true
   printf '%s\n' "$line" >> "$LOG_DIR/supervisor.log" 2>/dev/null || true
   if [[ -t 2 ]]; then
-    printf '%s\n' "$line" >&2
+    apx_paint "$APX_ANSI_DIM" "[$timestamp]" 2
+    printf ' ' >&2
+    case "$*" in
+      *fail*|*error*|*"did not become healthy"*) apx_paint "$APX_ANSI_RED" "$*" 2 ;;
+      *warn*|*retry*|*backoff*) apx_paint "$APX_ANSI_YELLOW" "$*" 2 ;;
+      *started*|*healthy*|*installed*) apx_paint "$APX_ANSI_GREEN" "$*" 2 ;;
+      *) printf '%s' "$*" >&2 ;;
+    esac
+    printf '\n' >&2
   fi
 }
 
@@ -654,7 +726,7 @@ service_backend() {
   local requested="${APX_SERVICE_BACKEND:-auto}" saved=""
   if [[ "$requested" != "auto" ]]; then
     case "$requested" in launchd|systemd|nohup) echo "$requested"; return ;; esac
-    echo "error: invalid APX_SERVICE_BACKEND: $requested" >&2
+    apx_error "invalid APX_SERVICE_BACKEND: $requested"
     return 2
   fi
   [[ -f "$SERVICE_BACKEND_FILE" ]] && IFS= read -r saved < "$SERVICE_BACKEND_FILE" || true
@@ -689,7 +761,7 @@ EOF
 }
 
 systemd_install_service() {
-  systemd_user_available || { echo "error: systemd user manager is not available" >&2; return 1; }
+  systemd_user_available || { apx_error "systemd user manager is not available"; return 1; }
   load_config
   ensure_runtime_dirs
   write_systemd_unit
@@ -985,14 +1057,17 @@ optimizer_latest() {
     else printf '%s' "update available"
     fi
   }
-  cat <<EOF
-latest optimizer versions (registry lookup; read-only)
-headroom-ai (PyPI): current=${headroom_current} latest=${headroom} status=$(optimizer_version_status "$headroom_current" "$headroom")
-pxpipe-proxy (npm): current=${pxpipe_current} latest=${pxpipe} status=$(optimizer_version_status "$pxpipe_current" "$pxpipe")
-squeezr-ai (npm): current=${squeezr_current} latest=${squeezr} status=$(optimizer_version_status "$squeezr_current" "$squeezr")
-
-This command did not install, upgrade, or alter any optimizer.
-EOF
+  apx_paint "${APX_ANSI_BOLD}${APX_ANSI_CYAN}" "latest optimizer versions"
+  printf ' (registry lookup; read-only)\n'
+  printf 'headroom-ai (PyPI): current=%s latest=%s status=' "$headroom_current" "$headroom"
+  apx_state "$(optimizer_version_status "$headroom_current" "$headroom")"
+  printf '\n'
+  printf 'pxpipe-proxy (npm): current=%s latest=%s status=' "$pxpipe_current" "$pxpipe"
+  apx_state "$(optimizer_version_status "$pxpipe_current" "$pxpipe")"
+  printf '\n'
+  printf 'squeezr-ai (npm): current=%s latest=%s status=' "$squeezr_current" "$squeezr"
+  apx_state "$(optimizer_version_status "$squeezr_current" "$squeezr")"
+  printf '\n\nThis command did not install, upgrade, or alter any optimizer.\n'
 }
 
 maybe_check_optimizer_updates() {
@@ -1017,14 +1092,17 @@ PY
     mkdir -p "$STATE_DIR"
     local tmp
     tmp="$(mktemp "$STATE_DIR/optimizer-latest.XXXXXX")" || exit 0
-    APX_OPTIMIZER_AUTO_CHECK=0 "$0" optimizer latest > "$tmp" 2>/dev/null && mv "$tmp" "$OPTIMIZER_UPDATE_CACHE_FILE"
+    APX_COLOR=never APX_OPTIMIZER_AUTO_CHECK=0 "$0" optimizer latest > "$tmp" 2>/dev/null && mv "$tmp" "$OPTIMIZER_UPDATE_CACHE_FILE"
   ) >/dev/null 2>&1 &
 }
 
 optimizer_update_summary() {
   [[ -f "$OPTIMIZER_UPDATE_CACHE_FILE" ]] || return 0
   if grep -q 'status=update available' "$OPTIMIZER_UPDATE_CACHE_FILE"; then
-    echo "optimizer updates: update available (run: apx optimizer latest)"
+    apx_paint "$APX_ANSI_CYAN" "optimizer updates:"
+    printf ' '
+    apx_state "update available"
+    printf ' (run: apx optimizer latest)\n'
   fi
 }
 
@@ -1259,7 +1337,9 @@ config_advise() {
         "$(advisor_json_escape "$title")" "$(advisor_json_escape "$impact")" "$(advisor_json_escape "$remediation")" \
         "$(advisor_is_safe_to_apply "$id" && echo true || echo false)" "$([[ "$dismissed" == "1" ]] && echo true || echo false)"
     else
-      printf '\n[%s] %s — %s\n  Impact: %s\n  Next: %s\n' "$severity" "$category" "$title" "$impact" "$remediation"
+      printf '\n['
+      apx_state "$severity"
+      printf '] %s — %s\n  Impact: %s\n  Next: %s\n' "$category" "$title" "$impact" "$remediation"
       advisor_is_safe_to_apply "$id" && echo "  Safe apply: apx config advise --apply-safe $id (configuration only; restart separately)"
       [[ "$dismissed" == "0" ]] || echo "  Status: dismissed"
     fi
@@ -1813,20 +1893,20 @@ target_api_url() {
 validate_target_api_url() {
   local url="$1"
   if [[ ! "$url" =~ ^https?://([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]+)?(/[^[:space:]?#]*)?$ ]]; then
-    echo "error: target API URL must be http(s)://host[:port][/base-path]" >&2
+    apx_error "target API URL must be http(s)://host[:port][/base-path]"
     echo "got: $url" >&2
     return 2
   fi
   local rest="${url#*://}" port=""
   rest="${rest%%/*}"
   if [[ "$rest" == *"@"* ]]; then
-    echo "error: target API URL must not include userinfo" >&2
+    apx_error "target API URL must not include userinfo"
     return 2
   fi
   if [[ "$rest" =~ :([0-9]+)$ ]]; then
     port="${BASH_REMATCH[1]}"
     if (( port < 1 || port > 65535 )); then
-      echo "error: target API URL port out of range: $port" >&2
+      apx_error "target API URL port out of range: $port"
       return 2
     fi
   fi
@@ -1950,21 +2030,21 @@ apply_chain() {
     local IFS=, part
     for part in $chain; do
       if ! service_known "$part"; then
-        echo "error: unknown service in chain: $part" >&2
+        apx_error "unknown service in chain: $part"
         echo "known services: ${APX_KNOWN_SERVICES[*]}" >&2
         return 2
       fi
       local seen
       for seen in "${seen_parts[@]:-}"; do
         if [[ "$seen" == "$part" ]]; then
-          echo "error: duplicate service in chain: $part" >&2
+          apx_error "duplicate service in chain: $part"
           return 2
         fi
       done
       seen_parts+=("$part")
     done
     if [[ "$chain" == *squeezr,* ]]; then
-      echo "error: squeezr must be the final local service in APX_CHAIN" >&2
+      apx_error "squeezr must be the final local service in APX_CHAIN"
       echo "current Squeezr releases do not expose a configurable upstream for forwarding to another apx service" >&2
       return 2
     fi
@@ -2383,11 +2463,11 @@ port_label_for_key() {
 validate_port_number() {
   local port="$1"
   if [[ ! "$port" =~ ^[0-9]+$ ]]; then
-    echo "error: port must be a number from 1 to 65535: $port" >&2
+    apx_error "port must be a number from 1 to 65535: $port"
     return 2
   fi
   if (( port < 1 || port > 65535 )); then
-    echo "error: port out of range: $port" >&2
+    apx_error "port out of range: $port"
     return 2
   fi
 }
@@ -2398,7 +2478,7 @@ ensure_port_not_configured_elsewhere() {
     [[ "$other" == "$key" ]] && continue
     value="${!other:-}"
     if [[ -n "$value" && "$value" == "$port" ]]; then
-      echo "error: port $port is already configured for $(port_label_for_key "$other") ($other)" >&2
+      apx_error "port $port is already configured for $(port_label_for_key "$other") ($other)"
       return 2
     fi
   done
@@ -2807,35 +2887,51 @@ status() {
   hownership="$(optimizer_ownership headroom)"
   pownership="$(optimizer_ownership pxpipe)"
   sqownership="$(optimizer_ownership squeezr)"
-  echo "version: $installed"
+  apx_kv "version:" "$installed"
   if [[ "$mode" == "release" ]]; then
     latest="$(latest_available_version "$mode")"
     print_update_status "$installed" "$latest"
   fi
-  echo "config: $CONFIG_FILE"
-  echo "service backend: $(service_backend 2>/dev/null || echo unknown)"
-  echo "log level: ${APX_LOG_LEVEL:-info}"
+  apx_kv "config:" "$CONFIG_FILE"
+  apx_kv "service backend:" "$(service_backend 2>/dev/null || echo unknown)"
+  apx_kv "log level:" "${APX_LOG_LEVEL:-info}"
   optimizer_update_summary
-  echo "mode: $(current_mode)"
-  echo "chain: $(chain_description)"
-  echo "supervisor: ${spid:-none} $sstate"
-  echo "Gateway:   pidfile=${gpid:-none} listener=${gport:-none} health=$ghealth"
-  echo "pxpipe:    pidfile=${ppid:-none} listener=${pport:-none} health=$phealth ownership=$pownership"
+  apx_kv "mode:" "$(current_mode)"
+  apx_kv "chain:" "$(chain_description)"
+  apx_paint "$APX_ANSI_CYAN" "supervisor:"
+  printf ' %s ' "${spid:-none}"
+  apx_state "$sstate"
+  printf '\n'
+  apx_paint "$APX_ANSI_CYAN" "Gateway:"
+  printf '   pidfile=%s listener=%s health=' "${gpid:-none}" "${gport:-none}"
+  apx_state "$ghealth"
+  printf '\n'
+  apx_paint "$APX_ANSI_CYAN" "pxpipe:"
+  printf '    pidfile=%s listener=%s health=' "${ppid:-none}" "${pport:-none}"
+  apx_state "$phealth"
+  printf ' ownership=%s\n' "$pownership"
   if [[ "$PXPIPE_ENABLED" == "1" ]]; then
-    echo "pxpipe models: $PXPIPE_MODELS"
+    apx_kv "pxpipe models:" "$PXPIPE_MODELS"
   fi
-  echo "Headroom:  pidfile=${hpid:-none} listener=${hport:-none} health=$hhealth ownership=$hownership"
-  echo "Squeezr:   pidfile=${sqpid:-none} listener=${sqport:-none} health=$sqhealth ownership=$sqownership"
+  apx_paint "$APX_ANSI_CYAN" "Headroom:"
+  printf '  pidfile=%s listener=%s health=' "${hpid:-none}" "${hport:-none}"
+  apx_state "$hhealth"
+  printf ' ownership=%s\n' "$hownership"
+  apx_paint "$APX_ANSI_CYAN" "Squeezr:"
+  printf '   pidfile=%s listener=%s health=' "${sqpid:-none}" "${sqport:-none}"
+  apx_state "$sqhealth"
+  printf ' ownership=%s\n' "$sqownership"
   if [[ "$SQUEEZR_ENABLED" == "1" ]]; then
-    echo "Squeezr dashboard: http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/dashboard"
+    apx_kv "Squeezr dashboard:" "http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/dashboard"
   fi
-  echo "logs: $LOG_DIR"
+  apx_kv "logs:" "$LOG_DIR"
 }
 
 doctor() {
   status
   echo
-  echo "commands:"
+  apx_paint "${APX_ANSI_BOLD}${APX_ANSI_CYAN}" "commands:"
+  printf '\n'
   command -v node || true
   command -v npx || true
   command -v headroom || true
@@ -2844,7 +2940,8 @@ doctor() {
   command -v ast-grep || true
   command -v sg || true
   echo
-  echo "Headroom doctor:"
+  apx_paint "${APX_ANSI_BOLD}${APX_ANSI_CYAN}" "Headroom doctor:"
+  printf '\n'
   headroom doctor || true
 }
 
@@ -3073,12 +3170,12 @@ debug_command() {
 
 dashboard_urls() {
   load_config
-  echo "pxpipe dashboard: http://$APX_INTERNAL_HOST:$PXPIPE_PORT/"
-  echo "Gateway health:   http://$BIND_HOST:$GATEWAY_PORT/livez"
-  echo "Headroom health:  http://$APX_INTERNAL_HOST:$HEADROOM_PORT/livez"
-  echo "Headroom stats:   http://$APX_INTERNAL_HOST:$HEADROOM_PORT/stats"
-  echo "Squeezr health:   http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/health"
-  echo "Squeezr dashboard:http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/dashboard"
+  apx_kv "pxpipe dashboard:" "http://$APX_INTERNAL_HOST:$PXPIPE_PORT/"
+  apx_kv "Gateway health:" "  http://$BIND_HOST:$GATEWAY_PORT/livez"
+  apx_kv "Headroom health:" " http://$APX_INTERNAL_HOST:$HEADROOM_PORT/livez"
+  apx_kv "Headroom stats:" "  http://$APX_INTERNAL_HOST:$HEADROOM_PORT/stats"
+  apx_kv "Squeezr health:" "  http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/health"
+  apx_kv "Squeezr dashboard:" "http://$APX_INTERNAL_HOST:$SQUEEZR_PORT/squeezr/dashboard"
 }
 
 open_dashboard() {
@@ -3179,14 +3276,25 @@ latest_available_version() {
 
 print_update_status() {
   local installed="$1" latest="$2" indent="${3:-}"
-  echo "${indent}latest version:    $latest"
+  apx_paint "$APX_ANSI_CYAN" "${indent}latest version:"
+  printf '    %s\n' "$latest"
   if [[ "$latest" == "unknown" ]]; then
-    echo "${indent}update status:     unknown"
+    apx_paint "$APX_ANSI_CYAN" "${indent}update status:"
+    printf '     '
+    apx_state "unknown"
+    printf '\n'
   elif [[ "$installed" == "$latest" ]]; then
-    echo "${indent}update status:     up to date"
+    apx_paint "$APX_ANSI_CYAN" "${indent}update status:"
+    printf '     '
+    apx_state "up to date"
+    printf '\n'
   else
-    echo "${indent}update status:     update available"
-    echo "${indent}run:               apx update --to v$latest"
+    apx_paint "$APX_ANSI_CYAN" "${indent}update status:"
+    printf '     '
+    apx_state "update available"
+    printf '\n'
+    apx_paint "$APX_ANSI_CYAN" "${indent}run:"
+    printf '               apx update --to v%s\n' "$latest"
   fi
 }
 
@@ -4165,7 +4273,7 @@ completions_command() {
   esac
 }
 
-usage() {
+usage_text() {
   cat <<EOF
 LeanRelay — local context-efficiency platform for LLMs
 
@@ -4236,8 +4344,51 @@ Options:
   --no-restart         Do not restart the apx service after mode/chain change
   --no-claude-sync     Do not update ~/.claude/settings.json
 
+Terminal color:
+  APX_COLOR=auto        Color interactive output (default)
+  APX_COLOR=always      Force color; use never to disable
+  NO_COLOR=1            Disable color regardless of APX_COLOR
+
 Config: $CONFIG_FILE
 EOF
+}
+
+colorize_help() {
+  local line prefix item rest
+  while IFS= read -r line; do
+    case "$line" in
+      "LeanRelay —"*)
+        apx_paint "${APX_ANSI_BOLD}${APX_ANSI_CYAN}" "$line"
+        printf '\n'
+        ;;
+      "Usage:"*|"Commands:"|"Mode presets:"|"For arbitrary orderings:"|"For custom upstream-compatible APIs:"|"For port conflicts:"|"Options:"|"Terminal color:")
+        apx_paint "${APX_ANSI_BOLD}${APX_ANSI_CYAN}" "$line"
+        printf '\n'
+        ;;
+      "  "[[:alnum:]-]*)
+        prefix="${line%%[![:space:]]*}"
+        rest="${line#"$prefix"}"
+        item="${rest%%[[:space:]]*}"
+        rest="${rest#"$item"}"
+        printf '%s' "$prefix"
+        apx_paint "$APX_ANSI_BLUE" "$item"
+        printf '%s\n' "$rest"
+        ;;
+      "Config:"*)
+        apx_paint "$APX_ANSI_CYAN" "Config:"
+        printf '%s\n' "${line#Config:}"
+        ;;
+      *) printf '%s\n' "$line" ;;
+    esac
+  done
+}
+
+usage() {
+  if apx_color_enabled 1; then
+    usage_text | colorize_help
+  else
+    usage_text
+  fi
 }
 
 cmd="${1:-status}"
@@ -4278,5 +4429,5 @@ case "$cmd" in
   cleanup) cleanup_command "$@" ;;
   completions) completions_command "$@" ;;
   help|-h|--help) usage ;;
-  *) usage >&2; exit 2 ;;
+  *) apx_error "unknown command: $cmd"; usage >&2; exit 2 ;;
 esac

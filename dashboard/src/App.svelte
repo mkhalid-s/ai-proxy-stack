@@ -231,6 +231,7 @@
   $: modelCount = Object.keys(summary.by_model || {}).length;
   $: totalTokens = Number(observed.tokens_in || summary.totals?.tokens_in || 0) + Number(observed.tokens_out || summary.totals?.tokens_out || 0);
   $: verifiedSaved = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.measured_tokens_saved || 0), 0);
+  $: estimatedSaved = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.estimated_tokens_saved || 0), 0);
   $: measuredAttempts = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.measured_attempts || 0), 0);
   $: optimizerAttempts = optimizerMetrics.reduce((total, optimizer) => total + Number(optimizer.attempts || 0), 0);
   $: baselineInputTokens = Number(observed.tokens_in || 0) + verifiedSaved;
@@ -247,7 +248,12 @@
       : failures
         ? `${number(failures)} issue${failures === 1 ? "" : "s"}`
         : "Healthy";
-  $: visibleAlerts = showAllSignals ? (attention.alerts || []) : (attention.alerts || []).slice(0, 1);
+  $: sortedAlerts = [...(attention.alerts || [])].sort((left, right) => {
+    const rank = /** @type {Record<string, number>} */ ({ critical: 0, warning: 1, info: 2 });
+    return (rank[left.severity] ?? 3) - (rank[right.severity] ?? 3)
+      || String(left.title || "").localeCompare(String(right.title || ""));
+  });
+  $: visibleAlerts = showAllSignals ? sortedAlerts : sortedAlerts.slice(0, 1);
   $: optimizerNames = [...new Set([
     ...latestOptimizerSnapshots.map((snapshot) => snapshot.optimizer),
     ...optimizerMetrics.map((optimizer) => optimizer.optimizer),
@@ -319,6 +325,7 @@
     <p class="journey-evidence">
       Evidence coverage: <strong>{evidenceCoverageRate == null ? "not measured" : `${evidenceCoverageRate.toFixed(0)}%`}</strong>
       · {number(measuredAttempts)} of {number(optimizerAttempts)} optimizer attempts supplied valid before/after token counts.
+      {#if estimatedSaved > 0} · <strong>{number(estimatedSaved)} estimated tokens</strong> are excluded from verified totals.{/if}
     </p>
   </article>
 
@@ -350,13 +357,13 @@
   </div>
 
   <div class="charts">
-    <article class="chart"><div class="chart-heading"><div><h3>Token flow</h3><small>Observed input and output tokens</small></div><span class="status">{windowValue}</span></div><div class="chart-key"><span class="key-input">Input</span><span class="key-output">Output</span></div><div class:empty={series.length < 2} class="plot" role="img" aria-label={`Token flow over ${windowValue}: ${number(observed.tokens_in)} input and ${number(observed.tokens_out)} output tokens.`} bind:this={tokenTarget}></div>{#if series.length < 2}<p class="chart-empty">A trend appears after two time buckets.</p>{/if}</article>
-    <article class="chart"><div class="chart-heading"><div><h3>Savings evidence</h3><small>Verified savings is distinct from estimates</small></div><span class="status">explicit</span></div><div class="chart-key"><span class="key-verified">Verified</span><span class="key-estimated">Estimated</span></div><div class:empty={savingsSeries.length < 2} class="plot" role="img" aria-label={`Savings over ${windowValue}: ${number(verifiedSaved)} verified tokens saved.`} bind:this={savingsTarget}></div>{#if savingsSeries.length < 2}<p class="chart-empty">A trend appears after two time buckets.</p>{/if}</article>
+    <article class="chart"><div class="chart-heading"><div><h3>Token flow</h3><small>{number(observed.tokens_in)} input · {number(observed.tokens_out)} output tokens in this window</small></div><span class="status">{windowValue}</span></div><div class="chart-key"><span class="key-input">Input</span><span class="key-output">Output</span></div><div class:empty={series.length < 2} class="plot" role="img" aria-label={`Token flow over ${windowValue}: ${number(observed.tokens_in)} input and ${number(observed.tokens_out)} output tokens.`} bind:this={tokenTarget}></div>{#if series.length < 2}<p class="chart-empty">A trend appears after two time buckets.</p>{/if}</article>
+    <article class="chart"><div class="chart-heading"><div><h3>Savings evidence</h3><small>{number(verifiedSaved)} verified · {number(estimatedSaved)} estimated tokens excluded</small></div><span class="status">explicit</span></div><div class="chart-key"><span class="key-verified">Verified</span><span class="key-estimated">Estimated</span></div><div class:empty={savingsSeries.length < 2} class="plot" role="img" aria-label={`Savings over ${windowValue}: ${number(verifiedSaved)} verified tokens saved and ${number(estimatedSaved)} estimated tokens excluded.`} bind:this={savingsTarget}></div>{#if savingsSeries.length < 2}<p class="chart-empty">A trend appears after two time buckets.</p>{/if}</article>
   </div>
 
   {:else if viewValue === "optimizers"}
   <div class="optimizer-overview" aria-label="Optimizer measurement summary">
-    <div><span>Verified savings this window</span><strong>{number(verifiedSaved)} tokens</strong><small>Request-level before/after evidence</small></div>
+    <div><span>Verified savings this window</span><strong>{number(verifiedSaved)} tokens</strong><small>Request-level evidence · {number(estimatedSaved)} estimated excluded</small></div>
     <div><span>Evidence coverage</span><strong>{evidenceCoverageRate == null ? "not measured" : `${evidenceCoverageRate.toFixed(0)}%`}</strong><small>{number(measuredAttempts)} of {number(optimizerAttempts)} attempts verified</small></div>
     <div><span>Persistence</span><strong>{efficiency.durable ? "Durable" : "Unavailable"}</strong><small>{efficiency.durable ? "Measurements survive restarts" : efficiency.note || "SQLite metrics unavailable"}</small></div>
   </div>

@@ -159,6 +159,14 @@ apx headroom settings set tool-search off # change one safe Headroom feature
 apx squeezr bypass on                     # bypass Squeezr compression temporarily
 ```
 
+### Terminal color
+
+`apx` uses restrained semantic color for interactive terminal output: cyan
+labels, green healthy/current states, yellow warnings and available updates,
+and red failures. Pipes, redirected output, and command substitutions remain
+plain automatically. Set `NO_COLOR=1` or `APX_COLOR=never` to disable color;
+use `APX_COLOR=always` to force it for a compatible terminal.
+
 ### What survives a restart?
 
 | Item | Persists? | Where / how to change it |

@@ -29,7 +29,7 @@ const fixture = {
   efficiency: {
     durable: true,
     observed: { tokens_in: 1200, tokens_out: 300 },
-    optimizers: [{ optimizer: "headroom", attempts: 4, measured_attempts: 3, estimated_attempts: 1, unavailable_attempts: 0, measured_tokens_saved: 300 }],
+    optimizers: [{ optimizer: "headroom", attempts: 4, measured_attempts: 3, estimated_attempts: 1, unavailable_attempts: 0, measured_tokens_saved: 300, estimated_tokens_saved: 80 }],
   },
   savings: { series: [{ ts: 1_700_000_000, measured_tokens_saved: 120, estimated_tokens_saved: 30 }, { ts: 1_700_000_060, measured_tokens_saved: 180, estimated_tokens_saved: 50 }] },
   snapshots: {
@@ -93,17 +93,19 @@ test("renders a focused, responsive token-efficiency overview", async ({ page },
   await expect(page.getByText("Verified baseline input", { exact: true })).toBeVisible();
   await expect(page.getByText("20.0% verified reduction")).toBeVisible();
   await expect(page.getByText(/3 of 4 optimizer attempts supplied valid/)).toBeVisible();
+  await expect(page.locator(".journey-evidence").getByText(/80 estimated tokens.*excluded/)).toBeVisible();
   await expect(page.getByText("Advanced operational details")).toHaveCount(0);
   await expect(page.locator(".token-card strong")).toHaveText("300 tokens");
   await expect(page.locator("main")).toBeVisible();
   await expect(page.locator("#svelte-overview > .loading")).toHaveCount(0);
   await expect(page.locator("label[for='window-select']")).toBeVisible();
   await expect(page.getByRole("img", { name: /Token flow over 1h/ })).toBeVisible();
-  await expect(page.getByText("Savings unavailable")).toHaveCount(0);
-  await page.getByRole("button", { name: "Review all 4 signals" }).click();
   await expect(page.getByText("Repeated failures")).toBeVisible();
+  await expect(page.getByText("Optimizer unavailable")).toHaveCount(0);
+  await page.getByRole("button", { name: "Review all 4 signals" }).click();
+  await expect(page.getByText("Optimizer unavailable")).toBeVisible();
   await page.getByRole("button", { name: "Show only the first signal" }).click();
-  await expect(page.getByText("Repeated failures")).toHaveCount(0);
+  await expect(page.getByText("Optimizer unavailable")).toHaveCount(0);
 
   const desktopLayout = await page.evaluate(() => {
     const metrics = document.querySelector(".metrics");

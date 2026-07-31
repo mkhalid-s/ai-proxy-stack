@@ -6,6 +6,8 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-07-31
+
 ### Added
 
 - Continuous CodeQL, secret, dependency, npm, immutable-Action, and OpenSSF

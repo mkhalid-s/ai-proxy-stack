@@ -20,6 +20,9 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 - GitHub Actions are pinned to immutable commit SHAs.
 - Dashboard responses now set no-referrer, nosniff, and frame-denial headers;
   dashboard session cookies use `SameSite=Strict`.
+- Proxy paths reject encoded traversal and origin-confusing forms, malformed
+  upstream response headers are dropped, and health responses no longer expose
+  the configured upstream target.
 
 ## [0.6.3] - 2026-07-31
 

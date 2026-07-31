@@ -266,6 +266,9 @@ jobs:
               proc = start_gateway(tmp, token="secret-token", tool_url=f"http://127.0.0.1:{TOOL_PORT}")
               try:
                   time.sleep(1)
+                  with urllib.request.urlopen(f"http://127.0.0.1:{GATEWAY_PORT}/livez", timeout=5) as r:
+                      health = json.loads(r.read())
+                      assert health == {"ok": True}, health
                   try:
                       urllib.request.urlopen(f"http://127.0.0.1:{GATEWAY_PORT}/proxy/pxpipe/", timeout=5)
                       raise AssertionError("unauthorized proxy path unexpectedly succeeded")
@@ -298,6 +301,13 @@ jobs:
                   with opener.open(f"http://127.0.0.1:{GATEWAY_PORT}/api/capture", timeout=5) as r:
                       assert r.status == 200
                       r.read()
+                  for unsafe_path in ("/proxy/pxpipe/%2e%2e/admin", "/%252e%252e/admin"):
+                      try:
+                          opener.open(f"http://127.0.0.1:{GATEWAY_PORT}{unsafe_path}", timeout=5)
+                          raise AssertionError("encoded proxy traversal unexpectedly succeeded")
+                      except urllib.error.HTTPError as e:
+                          assert e.code == 400, e
+                          assert json.loads(e.read())["error"] == "invalid_proxy_path"
                   try:
                       opener.open(f"http://127.0.0.1:{GATEWAY_PORT}/api/not-a-real-route", timeout=5)
                       raise AssertionError("unknown dashboard API unexpectedly reached an upstream")
@@ -395,6 +405,14 @@ jobs:
               assert '"code":"dashboard_auth_failed_"' in event_line, event_line
               assert "do-not-log" not in event_line and '"token"' not in event_line, event_line
               assert "request" not in event_line and "response" not in event_line, event_line
+              assert mod["_safe_proxy_request_path"]("/v1/messages?x=1") == "/v1/messages?x=1"
+              for unsafe_path in ("//metadata", "/../admin", "/%2e%2e/admin", "/%252e%252e/admin", "/a\\b"):
+                  assert mod["_safe_proxy_request_path"](unsafe_path) is None, unsafe_path
+              assert mod["_clean_http_header"]("x-safe", "value") == ("x-safe", "value")
+              assert mod["_clean_http_header"]("x-safe", "ok\r\nx-injected: yes") is None
+              assert mod["_clean_http_header"]("x-safe\ninvalid", "value") is None
+              assert mod["_safe_correlation_id"]("session-123:child") == "session-123:child"
+              assert mod["_safe_correlation_id"]("bad\r\nx-injected: yes") is None
           finally:
               os.environ.clear()
               os.environ.update(old_env)

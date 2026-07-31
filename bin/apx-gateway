@@ -140,6 +140,49 @@ _SENSITIVE_QUERY_KEYS = frozenset({
     "secret",
     "key",
 })
+_HTTP_FIELD_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+_CORRELATION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _clean_http_header(name: object, value: object) -> tuple[str, str] | None:
+    """Return a CR/LF-free HTTP field or reject it without forwarding."""
+    raw_name = str(name)
+    raw_value = str(value)
+    safe_name = re.sub(r"[^!#$%&'*+\-.^_`|~0-9A-Za-z]", "", raw_name)
+    safe_value = raw_value.replace("\r", "").replace("\n", "")
+    if (
+        safe_name != raw_name
+        or safe_value != raw_value
+        or not _HTTP_FIELD_NAME_RE.fullmatch(safe_name)
+    ):
+        return None
+    return safe_name, safe_value
+
+
+def _safe_proxy_request_path(raw_path: str) -> str | None:
+    """Keep proxy requests origin-relative and reject encoded traversal."""
+    if not raw_path or not raw_path.startswith("/") or raw_path.startswith("//"):
+        return None
+    decoded = raw_path
+    for _ in range(3):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            break
+        decoded = next_decoded
+    path_only = decoded.split("?", 1)[0]
+    if (
+        path_only.startswith("//")
+        or "\\" in path_only
+        or any(ord(char) < 32 or ord(char) == 127 for char in decoded)
+        or any(segment in {".", ".."} for segment in path_only.split("/"))
+    ):
+        return None
+    return raw_path
+
+
+def _safe_correlation_id(value: object) -> str | None:
+    candidate = str(value)
+    return candidate if _CORRELATION_ID_RE.fullmatch(candidate) else None
 
 # Service registry. Adding a new proxyable service means one entry here
 # (health path + label + default port) plus any needed env override.
@@ -338,8 +381,9 @@ def _derive_session_id(headers: Any, model: str | None, body: bytes) -> str:
                 val = headers.get(name) or headers.get(name.title())
             except Exception:  # noqa: BLE001
                 val = None
-            if val:
-                return str(val)[:64]
+            safe_value = _safe_correlation_id(val) if val else None
+            if safe_value:
+                return safe_value[:64]
     # Content-derived fallback: hash first user text block.
     try:
         obj = json.loads((body or b"").decode("utf-8", errors="replace") or "{}")
@@ -2497,6 +2541,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "apx-gateway/0.1"
 
+    def send_header(self, keyword: str, value: str) -> None:
+        checked = _clean_http_header(keyword, value)
+        if checked is None:
+            security_event("response_header_rejected", header_name=keyword)
+            return
+        super().send_header(*checked)
+
     def log_message(self, fmt: str, *args: object) -> None:
         safe_args = list(args)
         if safe_args and isinstance(safe_args[0], str):
@@ -2512,7 +2563,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if self._handle_dashboard_or_api():
             return
         if self.path in {"/livez", "/readyz", "/health"}:
-            self._json(200, {"ok": True, "target": TARGET_URL})
+            self._json(200, {"ok": True})
             return
         self._proxy()
 
@@ -2918,6 +2969,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
         path = sub_path if sub_path.startswith("/") else "/" + sub_path
         if query:
             path = f"{path}?{query}"
+        path = _safe_proxy_request_path(path)
+        if path is None:
+            self._respond_json(400, {"error": "invalid_proxy_path"})
+            return
         conn_cls = http.client.HTTPSConnection if target.scheme == "https" else http.client.HTTPConnection
         conn = conn_cls(target.netloc, timeout=REQUEST_TIMEOUT)
         try:
@@ -2948,7 +3003,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             body_out = b""
             if rewrite_body:
                 body_out = self._rewrite_proxied_html(resp.read(), prefix, content_type)
-            self.send_response(resp.status, resp.reason)
+            self.send_response(resp.status)
             for key, value in resp.getheaders():
                 lower = key.lower()
                 if lower in HOP_BY_HOP_HEADERS or lower in {"x-frame-options", "content-security-policy"}:
@@ -3432,8 +3487,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._json(502, {"error": f"invalid gateway target: {TARGET_URL}"})
             return
 
-        request_id = self.headers.get("x-apx-request-id") or _new_request_id()
-        path = self.path if self.path.startswith("/") else f"/{self.path}"
+        request_id = _safe_correlation_id(self.headers.get("x-apx-request-id")) or _new_request_id()
+        path = _safe_proxy_request_path(self.path)
+        if path is None:
+            self._respond_json(400, {"error": "invalid_proxy_path"})
+            return
         safe_path = _scrub_url_path(path)
         upstream_path = f"{target.path.rstrip('/')}{path}"
         if not upstream_path.startswith("/"):
@@ -3486,7 +3544,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             optimizer_attempts = _optimizer_attempts_from_headers(resp.headers)
             # Merge/append Server-Timing so we don't clobber upstream entries.
             upstream_st = resp.getheader("server-timing") or ""
-            self.send_response(resp.status, resp.reason)
+            self.send_response(resp.status)
             for key, value in resp.getheaders():
                 lower = key.lower()
                 if lower in HOP_BY_HOP_HEADERS or lower in {"server-timing", OPTIMIZER_METRICS_HEADER}:

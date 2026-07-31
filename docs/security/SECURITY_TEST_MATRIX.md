@@ -5,8 +5,8 @@
 | TM-01 remote dashboard | Remote-bind refusal and API smoke | Authenticated remote-bind fixture |
 | TM-02 token leakage | Strict cookie, clean redirect, referrer and redaction assertions | Browser referrer-policy coverage |
 | TM-03 CSRF/native mutation | Native dashboard local-only checks | Origin and mutation matrix |
-| TM-04 proxy escape | Optimizer fragment/redirect tests | Traversal and encoded-path fuzzing |
-| TM-05 SSRF/config URL | Advisor loopback parsing tests | Scheme, credentials, IPv6 and metadata-host cases |
+| TM-04 proxy escape | Optimizer fragment/redirect tests and encoded traversal rejection | Broader path fuzzing |
+| TM-05 SSRF/config URL | Origin-relative proxy paths and advisor loopback parsing tests | Scheme, credentials, IPv6 and metadata-host cases |
 | TM-06 command injection | Managed command execution coverage | Metacharacter/property fixtures |
 | TM-07 capture disclosure | Nested secret and truncation tests | Unicode, arrays and content-type corpus |
 | TM-08 exhaustion | Request and stream caps | Concurrent/load bounds |

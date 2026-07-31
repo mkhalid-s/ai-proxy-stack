@@ -20,6 +20,8 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 ### Changed
 
 - GitHub Actions are pinned to immutable commit SHAs.
+- The ClusterFuzzLite builder image is pinned by digest and covered by weekly
+  Dependabot updates.
 - Dashboard responses now set no-referrer, nosniff, and frame-denial headers;
   dashboard session cookies use `SameSite=Strict`.
 - Proxy paths reject encoded traversal and origin-confusing forms, malformed

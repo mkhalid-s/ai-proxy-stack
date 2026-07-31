@@ -4,8 +4,8 @@ pyinstaller \
   --distpath "$OUT" \
   --onefile \
   --name gateway_boundaries_fuzzer.pkg \
-  --add-data "$SRC/lean-relay/bin/apx-gateway:bin" \
   --paths "$SRC/lean-relay" \
+  --paths "$SRC/lean-relay/bin" \
   "$SRC/lean-relay/fuzz/gateway_boundaries_fuzzer.py"
 
 cat > "$OUT/gateway_boundaries_fuzzer" <<'WRAPPER'

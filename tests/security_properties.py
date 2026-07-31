@@ -5,17 +5,13 @@ from __future__ import annotations
 
 import random
 import string
-from importlib.machinery import SourceFileLoader
-from importlib.util import module_from_spec, spec_from_loader
+import sys
 from pathlib import Path
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
-_GATEWAY_LOADER = SourceFileLoader("apx_gateway_properties", str(ROOT / "bin" / "apx-gateway"))
-_GATEWAY_SPEC = spec_from_loader(_GATEWAY_LOADER.name, _GATEWAY_LOADER)
-assert _GATEWAY_SPEC is not None
-GATEWAY = module_from_spec(_GATEWAY_SPEC)
-_GATEWAY_LOADER.exec_module(GATEWAY)
+sys.path.insert(0, str(ROOT / "bin"))
+import apx_gateway_security as GATEWAY  # noqa: E402
 
 
 def fully_unquote(value: str) -> str:

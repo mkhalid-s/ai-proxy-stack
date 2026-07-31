@@ -171,7 +171,7 @@ else
     trap 'rm -rf "$STAGING_DIR"' EXIT
     extract_payload "$STAGING_DIR"
 
-    for required in bin/apx bin/apx-gateway bin/apx-squeezr install.sh VERSION; do
+    for required in bin/apx bin/apx-gateway bin/apx_gateway_security.py bin/apx-squeezr install.sh VERSION; do
       [[ -e "$STAGING_DIR/$required" ]] || die "payload is missing $required"
     done
     chmod +x "$STAGING_DIR/bin/"* "$STAGING_DIR/install.sh"
@@ -230,6 +230,7 @@ link_bin() {
 }
 link_bin apx
 link_bin apx-gateway
+link_bin apx_gateway_security.py
 link_bin apx-squeezr
 
 if [[ "$DRY_RUN" != "1" ]]; then

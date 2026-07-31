@@ -24,6 +24,10 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+# runpy-based diagnostics do not add an extensionless script's directory to
+# sys.path. Resolve the adjacent validator module consistently for direct,
+# symlinked, packaged, and diagnostic execution.
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from apx_gateway_security import (
     _CORRELATION_ID_RE,
     _HTTP_FIELD_NAME_RE,

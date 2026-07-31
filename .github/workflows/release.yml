@@ -26,7 +26,10 @@ jobs:
     uses: ./.github/workflows/security.yml
     permissions:
       contents: read
-      pull-requests: read
+      # security.yml's dependency-review job posts a PR summary. GitHub
+      # validates permissions for every called job before evaluating its `if`,
+      # including on tag events where dependency review is skipped.
+      pull-requests: write
       security-events: write
 
   # ── 1) Sanity: tag matches VERSION and fast lint checks pass. ──────────

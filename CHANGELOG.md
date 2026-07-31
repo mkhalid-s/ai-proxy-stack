@@ -35,7 +35,8 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 ### Fixed
 
 - The tag-triggered release workflow now grants its reusable security gate the
-  read-only pull-request permission required to validate the workflow graph.
+  pull-request write permission required by dependency-review's PR summary;
+  GitHub can now validate the complete reusable-workflow graph on tag pushes.
 - GitHub Release bodies are now generated deterministically from the matching
   version section in `CHANGELOG.md`.
 

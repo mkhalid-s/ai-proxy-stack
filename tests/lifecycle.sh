@@ -142,7 +142,7 @@ if "$APX" pxpipe models set 'model,*' --no-restart >/dev/null 2>&1; then
 fi
 "$APX" headroom settings set tool-search off --no-restart >/dev/null
 grep -q '^HEADROOM_ENABLE_TOOL_SEARCH=false$' "$APX_CONFIG"
-if ! "$APX" headroom settings get | grep -q '^tool-search=false$'; then
+if ! grep -q '^tool-search=false$' <<<"$("$APX" headroom settings get)"; then
   echo "ERROR: Headroom tool-search setting did not persist" >&2
   exit 1
 fi
@@ -151,11 +151,11 @@ if "$APX" headroom settings set tls-strict off --no-restart >/dev/null 2>&1; the
   exit 1
 fi
 "$APX" squeezr bypass --help >/dev/null
-if ! "$APX" optimizer headroom settings get | grep -q '^tool-search=false$'; then
+if ! grep -q '^tool-search=false$' <<<"$("$APX" optimizer headroom settings get)"; then
   echo "ERROR: grouped optimizer headroom command did not preserve the legacy behavior" >&2
   exit 1
 fi
-if ! "$APX" config port get gateway | grep -q "^GATEWAY_PORT=$PORT$"; then
+if ! grep -q "^GATEWAY_PORT=$PORT$" <<<"$("$APX" config port get gateway)"; then
   echo "ERROR: grouped config port command did not preserve the legacy behavior" >&2
   exit 1
 fi
@@ -169,7 +169,7 @@ if [[ "$advisor_json" != *'"id":"metrics-disabled"'* || "$advisor_json" != *'"sa
 fi
 "$APX" config advise --apply-safe metrics-disabled >/dev/null
 grep -q "^APX_METRICS_DB=\"$APX_STATE/metrics.db\"$" "$APX_CONFIG"
-if "$APX" config advise | grep -q 'Enable durable token metrics'; then
+if grep -q 'Enable durable token metrics' <<<"$("$APX" config advise)"; then
   echo "ERROR: applied metrics advisory was still active" >&2
   exit 1
 fi
@@ -199,7 +199,7 @@ if [[ "$advisor_json" != *'"id":"pxpipe-models-missing-opus-5"'* || "$advisor_js
   exit 1
 fi
 "$APX" config advise --dismiss pxpipe-models-missing-opus-5 >/dev/null
-if "$APX" config advise | grep -q 'Add Claude Opus 5'; then
+if grep -q 'Add Claude Opus 5' <<<"$("$APX" config advise)"; then
   echo "ERROR: dismissed configuration advisory was still active" >&2
   exit 1
 fi

@@ -13,6 +13,8 @@ with atheris.instrument_imports():
     sys.path.insert(0, bundle_root)
     from tests.security_properties import check_boundaries
 
+atheris.instrument_all()
+
 
 def TestOneInput(data: bytes) -> None:  # noqa: N802 - Atheris convention
     check_boundaries(data)

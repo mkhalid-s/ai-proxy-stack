@@ -4,13 +4,18 @@
 from __future__ import annotations
 
 import random
-import runpy
 import string
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
-GATEWAY = runpy.run_path(str(ROOT / "bin" / "apx-gateway"), run_name="apx_gateway_properties")
+_GATEWAY_LOADER = SourceFileLoader("apx_gateway_properties", str(ROOT / "bin" / "apx-gateway"))
+_GATEWAY_SPEC = spec_from_loader(_GATEWAY_LOADER.name, _GATEWAY_LOADER)
+assert _GATEWAY_SPEC is not None
+GATEWAY = module_from_spec(_GATEWAY_SPEC)
+_GATEWAY_LOADER.exec_module(GATEWAY)
 
 
 def fully_unquote(value: str) -> str:
@@ -24,7 +29,7 @@ def fully_unquote(value: str) -> str:
 
 def check_boundaries(data: bytes) -> None:
     text = data.decode("latin-1")
-    path = GATEWAY["_safe_proxy_request_path"](text)
+    path = GATEWAY._safe_proxy_request_path(text)
     if path is not None:
         assert path == text
         decoded = fully_unquote(path)
@@ -37,18 +42,18 @@ def check_boundaries(data: bytes) -> None:
 
     midpoint = len(text) // 2
     raw_name, raw_value = text[:midpoint], text[midpoint:]
-    header = GATEWAY["_clean_http_header"](raw_name, raw_value)
+    header = GATEWAY._clean_http_header(raw_name, raw_value)
     if header is not None:
         name, value = header
         assert name == raw_name and value == raw_value
-        assert GATEWAY["_HTTP_FIELD_NAME_RE"].fullmatch(name)
+        assert GATEWAY._HTTP_FIELD_NAME_RE.fullmatch(name)
         assert "\r" not in value and "\n" not in value
 
-    correlation_id = GATEWAY["_safe_correlation_id"](text)
+    correlation_id = GATEWAY._safe_correlation_id(text)
     if correlation_id is not None:
         assert correlation_id == text
         assert 1 <= len(correlation_id) <= 128
-        assert GATEWAY["_CORRELATION_ID_RE"].fullmatch(correlation_id)
+        assert GATEWAY._CORRELATION_ID_RE.fullmatch(correlation_id)
 
 
 def main() -> None:

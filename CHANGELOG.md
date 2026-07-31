@@ -6,6 +6,21 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Continuous CodeQL, secret, dependency, npm, immutable-Action, and OpenSSF
+  Scorecard security checks, plus scheduled Dependabot updates.
+- Security ownership, disclosure targets, threat model, test matrix, incident
+  response, and security-release documentation.
+- Release SPDX SBOMs and GitHub provenance/SBOM attestations.
+- Structured, body-free dashboard authentication failure events.
+
+### Changed
+
+- GitHub Actions are pinned to immutable commit SHAs.
+- Dashboard responses now set no-referrer, nosniff, and frame-denial headers;
+  dashboard session cookies use `SameSite=Strict`.
+
 ## [0.6.3] - 2026-07-31
 
 ### Fixed

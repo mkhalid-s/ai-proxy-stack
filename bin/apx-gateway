@@ -911,6 +911,21 @@ def log_trace(message: str) -> None:
     log(message, "trace")
 
 
+def security_event(code: str, **fields: object) -> None:
+    """Emit a structured, body-free security event suitable for log routing."""
+    payload: dict[str, object] = {"code": re.sub(r"[^a-z0-9_.-]", "_", code.lower())}
+    for key, value in fields.items():
+        safe_key = re.sub(r"[^a-z0-9_.-]", "_", key.lower())
+        sensitive_fields = _ALWAYS_REDACT_JSON_KEYS | _SENSITIVE_QUERY_KEYS
+        if safe_key in sensitive_fields or any(
+            part in safe_key for part in ("token", "secret", "password", "body", "payload")
+        ):
+            continue
+        safe_value = re.sub(r"[^A-Za-z0-9:._-]", "_", str(value))[:160]
+        payload[safe_key] = safe_value
+    log(f"security_event {json.dumps(payload, sort_keys=True, separators=(',', ':'))}")
+
+
 def _read_version() -> str:
     try:
         with open(VERSION_FILE, "r", encoding="utf-8") as fh:
@@ -2609,7 +2624,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return {
                 "set-cookie": (
                     f"{DASHBOARD_COOKIE_NAME}={quote(provided, safe='')}; "
-                    "Path=/; HttpOnly; SameSite=Lax"
+                    "Path=/; HttpOnly; SameSite=Strict"
                 )
             }
         return {}
@@ -2724,6 +2739,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return True
         if path.startswith("/api/"):
             if not self._authorized_for_dashboard():
+                security_event("dashboard_auth_failed", client_ip=self._client_ip())
                 self._respond_json(401, {"error": "unauthorized", "hint": "set APX_DASHBOARD_TOKEN and pass ?token= or Authorization: Bearer"})
                 return True
         if path == "/api/status":
@@ -2843,6 +2859,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         return False
 
     def _require_token(self) -> None:
+        security_event("dashboard_auth_failed", client_ip=self._client_ip())
         body = (
             b"<!doctype html><meta charset=utf-8><title>apx</title>"
             b"<h1>apx dashboard</h1><p>Set <code>APX_DASHBOARD_TOKEN</code> and open with "
@@ -2945,6 +2962,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self.send_header("content-length", str(len(body_out)))
             self.send_header("x-frame-options", "DENY")
             self.send_header("content-security-policy", "frame-ancestors 'none'")
+            self.send_header("referrer-policy", "no-referrer")
+            self.send_header("x-content-type-options", "nosniff")
             self.send_header("connection", "close")
             self.end_headers()
             if rewrite_body:
@@ -3212,6 +3231,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self.send_header("content-type", content_type)
             self.send_header("content-length", str(len(body)))
             self.send_header("cache-control", "no-store")
+            self.send_header("referrer-policy", "no-referrer")
+            self.send_header("x-content-type-options", "nosniff")
+            self.send_header("x-frame-options", "DENY")
             for key, value in (extra_headers or {}).items():
                 self.send_header(key, value)
             self.send_header("connection", "close")

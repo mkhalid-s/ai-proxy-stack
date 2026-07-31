@@ -20,10 +20,9 @@ jobs:
     name: Lint (shellcheck + syntax + Python compile)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
@@ -211,13 +210,13 @@ jobs:
               def log_message(self, *_args):
                   pass
 
-          def start_gateway(tmp, capture="metadata", ack="", token="", body_cap="", max_request_bytes="67108864", tool_url=""):
+          def start_gateway(tmp, capture="metadata", ack="", token="", body_cap="", max_request_bytes="67108864", tool_url="", bind_host="127.0.0.1"):
               os.makedirs(os.path.join(tmp, "state"), exist_ok=True)
               os.makedirs(os.path.join(tmp, "config"), exist_ok=True)
               cfg = os.path.join(tmp, "config", "config.env")
               with open(cfg, "w", encoding="utf-8") as fh:
                   fh.write("\n".join([
-                      "BIND_HOST=127.0.0.1",
+                      f"BIND_HOST={bind_host}",
                       f"GATEWAY_PORT={GATEWAY_PORT}",
                       "GATEWAY_ENABLED=1",
                       "APX_CHAIN=\"\"",
@@ -230,7 +229,7 @@ jobs:
               env.update({
                   "GATEWAY_TARGET_URL": f"http://127.0.0.1:{UPSTREAM_PORT}",
                   "GATEWAY_PORT": str(GATEWAY_PORT),
-                  "BIND_HOST": "127.0.0.1",
+                  "GATEWAY_HOST": bind_host,
                   "APX_STATE_DIR": os.path.join(tmp, "state"),
                   "APX_CONFIG": cfg,
                   "APX_METRICS_DB": os.path.join(tmp, "state", "metrics.db"),
@@ -256,6 +255,10 @@ jobs:
               refused = start_gateway(tmp, capture="metadata", body_cap="-1")
               refused.wait(timeout=5)
               assert refused.returncode == 3, refused.stdout.read()
+          with tempfile.TemporaryDirectory() as tmp:
+              refused = start_gateway(tmp, bind_host="0.0.0.0")
+              refused.wait(timeout=5)
+              assert refused.returncode == 2, refused.stdout.read()
 
           tool = ThreadingHTTPServer(("127.0.0.1", TOOL_PORT), ToolProxy)
           threading.Thread(target=tool.serve_forever, daemon=True).start()
@@ -285,7 +288,11 @@ jobs:
                           return fp
                   opener_no_redirect = urllib.request.build_opener(NoRedirectHandler, cookie_processor)
                   with opener_no_redirect.open(f"http://127.0.0.1:{GATEWAY_PORT}/?token=secret-token", timeout=5) as r:
-                      assert "apx_dashboard_token" in r.headers.get("set-cookie", "")
+                      cookie = r.headers.get("set-cookie", "")
+                      assert "apx_dashboard_token" in cookie
+                      assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
+                      assert r.headers.get("location") == "/"
+                      assert r.headers.get("referrer-policy") == "no-referrer"
                       r.read()
                   opener = urllib.request.build_opener(cookie_processor)
                   with opener.open(f"http://127.0.0.1:{GATEWAY_PORT}/api/capture", timeout=5) as r:
@@ -379,6 +386,15 @@ jobs:
               nested = {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"api_key": "deep-secret"}}}}}}}}}}
               captured = mod["_capture_body"](json.dumps(nested).encode(), "application/json")
               assert "deep-secret" not in captured, captured
+              import contextlib
+              import io
+              event_output = io.StringIO()
+              with contextlib.redirect_stdout(event_output):
+                  mod["security_event"]("Dashboard Auth Failed!", client_ip="127.0.0.1", token="do-not-log verbatim")
+              event_line = event_output.getvalue()
+              assert '"code":"dashboard_auth_failed_"' in event_line, event_line
+              assert "do-not-log" not in event_line and '"token"' not in event_line, event_line
+              assert "request" not in event_line and "response" not in event_line, event_line
           finally:
               os.environ.clear()
               os.environ.update(old_env)
@@ -563,9 +579,8 @@ jobs:
     name: Dashboard browser checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
           cache: npm
@@ -593,7 +608,7 @@ jobs:
 
       - name: Upload dashboard render artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: focused-dashboard-renders
           path: dashboard/test-results/**/dashboard-*.png
@@ -608,8 +623,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
-
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Pack self-extracting apx.sh
         run: |
           bash build/pack.sh
@@ -694,7 +708,7 @@ jobs:
 
       - name: Upload apx.sh artifact
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: apx-sh
           path: |
@@ -720,8 +734,7 @@ jobs:
       # Isolate the smoke install to a scratch HOME so we don't touch the runner's real one.
       FAKE_HOME: ${{ github.workspace }}/.smoke-home
     steps:
-      - uses: actions/checkout@v5
-
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Cross-platform lifecycle backend smoke
         # lifecycle.sh creates its own temp HOME and unsets XDG_* so runner
         # env (FAKE_HOME / XDG_CONFIG_HOME) cannot redirect unit paths.
@@ -951,7 +964,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
 

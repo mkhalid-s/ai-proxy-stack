@@ -21,6 +21,13 @@ jobs:
     permissions:
       contents: read
 
+  full-security:
+    name: Full security gate
+    uses: ./.github/workflows/security.yml
+    permissions:
+      contents: read
+      security-events: write
+
   # ── 1) Sanity: tag matches VERSION and fast lint checks pass. ──────────
   #      The reusable full-ci job above is the authoritative release gate;
   #      these cheap checks keep tag/version failures easy to diagnose.
@@ -30,7 +37,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
 
@@ -49,7 +56,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
@@ -65,11 +72,14 @@ jobs:
   # ── 2) Build all artifacts: source tarball + self-extracting apx.sh ──────
   build:
     name: Build release artifacts
-    needs: [full-ci, verify]
+    needs: [full-ci, full-security, verify]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v5
-
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Build source tarball
         run: |
           version="${{ needs.verify.outputs.version }}"
@@ -100,8 +110,31 @@ jobs:
           fi
           ( cd dist && sha256sum -c apx.sh.sha256 )
 
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: dist/apx-${{ needs.verify.outputs.version }}
+          format: spdx-json
+          output-file: dist/apx-${{ needs.verify.outputs.version }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest release artifact provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: |
+            dist/apx.sh
+            dist/get.sh
+            dist/apx-${{ needs.verify.outputs.version }}.tar.gz
+
+      - name: Attest source archive SBOM
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: dist/apx-${{ needs.verify.outputs.version }}.tar.gz
+          sbom-path: dist/apx-${{ needs.verify.outputs.version }}.spdx.json
+
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: release-artifacts
           path: |
@@ -111,6 +144,7 @@ jobs:
             dist/get.sh.sha256
             dist/apx-*.tar.gz
             dist/apx-*.tar.gz.sha256
+            dist/apx-*.spdx.json
           if-no-files-found: error
           retention-days: 30
 
@@ -127,7 +161,7 @@ jobs:
       FAKE_HOME: ${{ github.workspace }}/.smoke-home
     steps:
       - name: Download release artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           name: release-artifacts
           path: dist
@@ -145,6 +179,7 @@ jobs:
             shasum -a 256 -c apx-*.tar.gz.sha256
           fi
           tar -tzf apx-*.tar.gz | grep -q '/install.sh$'
+          python3 -c 'import json,glob; data=json.load(open(glob.glob("apx-*.spdx.json")[0])); assert data.get("spdxVersion")'
           # get.sh must be present. Executable bit is stripped by
           # actions/upload-artifact so we only assert existence here; we
           # always invoke get.sh via `bash dist/get.sh` below.
@@ -360,16 +395,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
-
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Download release artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           name: release-artifacts
           path: dist
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             dist/apx.sh
@@ -378,5 +412,6 @@ jobs:
             dist/get.sh.sha256
             dist/apx-*.tar.gz
             dist/apx-*.tar.gz.sha256
+            dist/apx-*.spdx.json
           generate_release_notes: true
           fail_on_unmatched_files: true

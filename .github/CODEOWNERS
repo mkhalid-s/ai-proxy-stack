@@ -1,0 +1,18 @@
+# Until this repository moves to an organization, the repository owner is the
+# accountable reviewer. Replace this identity with maintainer and security
+# teams when organizational ownership is available.
+* @mkhalid-s
+
+# Security-sensitive execution, persistence, and delivery paths.
+/bin/apx @mkhalid-s
+/bin/apx-gateway @mkhalid-s
+/bin/apx-squeezr @mkhalid-s
+/install.sh @mkhalid-s
+/bootstrap.sh @mkhalid-s
+/get.sh @mkhalid-s
+/build/ @mkhalid-s
+/.github/workflows/ @mkhalid-s
+/config/ @mkhalid-s
+/tests/ @mkhalid-s
+/SECURITY.md @mkhalid-s
+/docs/security/ @mkhalid-s

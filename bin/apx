@@ -2930,6 +2930,35 @@ status() {
 doctor() {
   status
   echo
+  apx_paint "${APX_ANSI_BOLD}${APX_ANSI_CYAN}" "security posture:"
+  printf '\n'
+  if [[ "$BIND_HOST" == "127.0.0.1" || "$BIND_HOST" == "::1" || "$BIND_HOST" == "localhost" ]]; then
+    apx_kv "dashboard exposure:" "loopback only"
+  elif [[ -n "$APX_DASHBOARD_TOKEN" ]]; then
+    apx_kv "dashboard exposure:" "remote bind protected by access token"
+  else
+    apx_paint "$APX_ANSI_CYAN" "dashboard exposure:"
+    printf ' '
+    apx_state "critical"
+    printf ' (remote bind without an access token)\n'
+  fi
+  if [[ "$APX_CAPTURE" == "full" ]]; then
+    apx_paint "$APX_ANSI_CYAN" "request capture:"
+    printf ' '
+    apx_state "warning"
+    printf ' (full redacted bodies)\n'
+  else
+    apx_kv "request capture:" "$APX_CAPTURE"
+  fi
+  apx_paint "$APX_ANSI_CYAN" "durable metrics:"
+  printf ' '
+  if durable_metrics_disabled "$APX_METRICS_DB"; then
+    apx_state "disabled"
+  else
+    apx_state "durable"
+  fi
+  printf '\n'
+  echo
   apx_paint "${APX_ANSI_BOLD}${APX_ANSI_CYAN}" "commands:"
   printf '\n'
   command -v node || true

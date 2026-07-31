@@ -11,6 +11,33 @@ credentials, request bodies, dashboard exports, or logs in a report. Include a
 minimal reproduction, affected version (`apx version`), impact, and any safe
 mitigation you found.
 
+Do not send vulnerability details to a personal email address. If GitHub's
+private advisory form is unavailable, open a public issue containing only the
+words "private security contact required" and no technical details or secrets.
+
+## Supported Versions
+
+The latest published release receives security fixes. The immediately previous
+minor release may receive a critical fix for 30 days after it is superseded.
+Older releases are unsupported and should be upgraded with `apx update`.
+
+## Response Targets
+
+These are maintainer response targets, not guarantees:
+
+| Severity | Initial response | Mitigation or plan |
+| --- | --- | --- |
+| Critical | 1 business day | 3 calendar days |
+| High | 2 business days | 7 calendar days |
+| Moderate | 5 business days | 30 calendar days |
+| Low | 10 business days | Next appropriate release |
+
+Severity considers confidentiality of prompts and credentials, remote code
+execution, authentication bypass, release-channel compromise, and destructive
+filesystem behavior. Maintainers coordinate disclosure and assign a CVE when
+appropriate. Security releases follow
+[`docs/security/SECURITY_RELEASE_PROCESS.md`](docs/security/SECURITY_RELEASE_PROCESS.md).
+
 ## Operational Notes
 
 - Bind to `127.0.0.1` unless you intentionally need remote access. The LeanRelay
@@ -31,3 +58,12 @@ mitigation you found.
 - Do not publish `~/.local/state/apx`, `~/.pxpipe`, `~/.headroom`, or
   `~/.squeezr` logs/caches.
 - Do not commit API keys or provider tokens.
+
+## Security Boundaries
+
+LeanRelay protects its own gateway, dashboard, local state, installer, and
+release artifacts. Third-party optimizers and providers remain separate trust
+domains. An optimizer marked `external` is administered by its owner, while an
+`apx-managed` optimizer is governed by the recorded source and version policy.
+See [`docs/security/THREAT_MODEL.md`](docs/security/THREAT_MODEL.md) for the
+system boundaries and accepted residual risks.

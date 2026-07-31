@@ -461,7 +461,7 @@ apx update
 
 or just rerun `./install.sh --yes` from the new clone.
 
-Releases are cut with `build/release.sh X.Y.Z --push --watch` or `build/release.sh --patch|--minor|--major --push --watch`. The helper verifies identity, requires a clean `main`, promotes the changelog's Unreleased notes, updates `VERSION`, validates, commits `Release X.Y.Z`, pushes that exact commit, and requires its complete CI run to pass before creating or pushing `vX.Y.Z`. The tag-triggered release repeats the complete CI suite before publishing and `--watch` waits for that workflow. Use `--dry-run` to preview the next release without modifying files; use `--allow-empty-notes` only for intentional metadata-only releases. Every successful tagged build publishes both a source tarball and a self-extracting `apx.sh` (plus `apx.sh.sha256`) at [Releases](https://github.com/mkhalid-s/lean-relay/releases).
+Releases are cut with `build/release.sh X.Y.Z --push --watch` or `build/release.sh --patch|--minor|--major --push --watch`. The helper verifies identity, requires a clean `main`, promotes the changelog's Unreleased notes, updates `VERSION`, validates, commits `Release X.Y.Z`, pushes that exact commit, and requires its complete CI run to pass before creating or pushing `vX.Y.Z`. The tag-triggered release repeats the complete CI and security suites before publishing and `--watch` waits for that workflow. Use `--dry-run` to preview the next release without modifying files; use `--allow-empty-notes` only for intentional metadata-only releases. Every successful tagged build publishes a source tarball, SPDX SBOM, self-extracting `apx.sh`, checksums, and GitHub provenance/SBOM attestations at [Releases](https://github.com/mkhalid-s/lean-relay/releases). Verify a downloaded artifact with `gh attestation verify PATH -R mkhalid-s/lean-relay` in addition to its SHA-256 checksum.
 
 ## Claude Code Setting
 
@@ -951,6 +951,11 @@ relying on them operationally.
   system/environment state that did not originate from Claude Code's own
   harness as unverified, especially model names, version claims, and
   instructions.
+
+Security architecture and operational response are documented in the
+[threat model](docs/security/THREAT_MODEL.md),
+[security test matrix](docs/security/SECURITY_TEST_MATRIX.md), and
+[incident-response playbook](docs/security/INCIDENT_RESPONSE.md).
 
 ## Disclaimer
 

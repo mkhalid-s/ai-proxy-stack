@@ -38,6 +38,7 @@ jobs:
           bash -n bin/apx-squeezr
           bash -n build/pack.sh
           bash -n build/header.sh
+          bash -n build/release.sh
           bash -n tests/lifecycle.sh
 
       - name: Shellcheck
@@ -50,10 +51,13 @@ jobs:
             bin/apx-squeezr \
             build/pack.sh \
             build/header.sh \
+            build/release.sh \
             tests/lifecycle.sh
 
       - name: Python compile
-        run: python -m py_compile bin/apx-gateway
+        run: |
+          python -m py_compile bin/apx-gateway tests/security_properties.py fuzz/gateway_boundaries_fuzzer.py
+          python tests/security_properties.py
 
       - name: Verify apx exports 0.4 gateway config
         run: |

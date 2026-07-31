@@ -4,6 +4,7 @@ set -Eeuo pipefail
 STACK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_BIN="$STACK_ROOT/bin/apx"
 SRC_GATEWAY_BIN="$STACK_ROOT/bin/apx-gateway"
+SRC_GATEWAY_SECURITY="$STACK_ROOT/bin/apx_gateway_security.py"
 SRC_SQUEEZR_BIN="$STACK_ROOT/bin/apx-squeezr"
 SRC_CONFIG="$STACK_ROOT/config/config.env"
 SRC_VERSION_FILE="$STACK_ROOT/VERSION"
@@ -13,6 +14,7 @@ SRC_DASHBOARD_STATIC_DIR="$STACK_ROOT/share/dashboard"
 RUNTIME_BIN_DIR="$HOME/.local/bin"
 RUNTIME_BIN="$RUNTIME_BIN_DIR/apx"
 RUNTIME_GATEWAY_BIN="$RUNTIME_BIN_DIR/apx-gateway"
+RUNTIME_GATEWAY_SECURITY="$RUNTIME_BIN_DIR/apx_gateway_security.py"
 RUNTIME_SQUEEZR_BIN="$RUNTIME_BIN_DIR/apx-squeezr"
 RUNTIME_CONFIG_DIR="$HOME/.config/apx"
 RUNTIME_CONFIG="$RUNTIME_CONFIG_DIR/config.env"
@@ -461,6 +463,8 @@ sync_runtime() {
   else
     install_bin "$SRC_BIN"         "$RUNTIME_BIN"         "runtime command"
     install_bin "$SRC_GATEWAY_BIN" "$RUNTIME_GATEWAY_BIN" "runtime gateway"
+    backup_if_different "$SRC_GATEWAY_SECURITY" "$RUNTIME_GATEWAY_SECURITY"
+    run_step "install runtime gateway security module" install -m 0644 "$SRC_GATEWAY_SECURITY" "$RUNTIME_GATEWAY_SECURITY"
     install_bin "$SRC_SQUEEZR_BIN" "$RUNTIME_SQUEEZR_BIN" "runtime Squeezr helper"
   fi
 
@@ -650,7 +654,7 @@ uninstall() {
     fi
     return 0
   fi
-  run_step "remove runtime command" rm -f "$RUNTIME_BIN" "$RUNTIME_GATEWAY_BIN" "$RUNTIME_SQUEEZR_BIN"
+  run_step "remove runtime command" rm -f "$RUNTIME_BIN" "$RUNTIME_GATEWAY_BIN" "$RUNTIME_GATEWAY_SECURITY" "$RUNTIME_SQUEEZR_BIN"
   log "note: apx CLI was already missing; run install.sh --purge on a source clone to remove state/config"
 }
 

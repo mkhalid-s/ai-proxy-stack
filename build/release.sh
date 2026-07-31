@@ -8,25 +8,29 @@ usage() {
   cat <<'EOF'
 Usage: build/release.sh VERSION [--push] [--watch] [--skip-tests]
        build/release.sh --patch|--minor|--major [--push] [--watch] [--skip-tests]
+       build/release.sh VERSION --finalize [--watch]
 
-Prepare a LeanRelay/apx release from a clean main branch.
+Prepare a LeanRelay/apx release PR from a clean main branch, or finalize its
+merged commit after required checks pass.
 
 Steps:
   1. Verify identity, branch, clean tree, and release tag availability.
   2. Move CHANGELOG.md [Unreleased] notes into VERSION's dated section.
   3. Update VERSION.
   4. Run release validations and build dist/apx.sh.
-  5. Commit "Release VERSION".
-  6. With --push, push main and require full CI on the exact release commit.
-  7. Create tag "vVERSION" only after CI passes, then optionally watch release.yml.
+  5. Create release/vVERSION and commit "Release VERSION".
+  6. With --push, push that branch and open a pull request.
+  7. After review and merge, run --finalize to verify exact-SHA CI and security,
+     create tag "vVERSION", and optionally watch release.yml.
 
 Options:
   --patch|--minor|--major  Compute the next version from VERSION.
   --dry-run                Print intended actions without modifying files.
   --allow-empty-notes      Allow releasing with an empty Unreleased changelog.
   --skip-tests             Skip lifecycle tests; still runs syntax/package checks.
-  --push                   Push main, require full CI, then push the release tag.
-  --watch                  Also wait for the gated release workflow to publish.
+  --push                   Push the release branch and open its pull request.
+  --finalize               On synchronized main, verify checks and push the tag.
+  --watch                  Wait for PR checks or the gated release publication.
 
 Identity defaults protect this repo's personal-account release flow:
   APX_RELEASE_GH_USER=mkhalid-s
@@ -34,6 +38,7 @@ Identity defaults protect this repo's personal-account release flow:
 
 Examples:
   build/release.sh --patch --push --watch
+  build/release.sh 0.5.4 --finalize --watch
   build/release.sh 0.5.4 --dry-run
 EOF
 }
@@ -45,12 +50,14 @@ watch=0
 skip_tests=0
 dry_run=0
 allow_empty_notes=0
+finalize=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --push) push=1 ;;
-    --watch) watch=1; push=1 ;;
+    --watch) watch=1 ;;
     --skip-tests) skip_tests=1 ;;
     --dry-run) dry_run=1 ;;
+    --finalize) finalize=1 ;;
     --allow-empty-notes) allow_empty_notes=1 ;;
     --patch|--minor|--major)
       if [[ -n "$bump" || -n "$version" ]]; then
@@ -73,6 +80,10 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+if [[ "$watch" == "1" && "$finalize" != "1" ]]; then
+  push=1
+fi
 
 current_version="$(head -n 1 VERSION | tr -d '[:space:]')"
 if [[ -n "$bump" ]]; then
@@ -109,7 +120,17 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][A-Za-z0-9.]+)?$ ]]; then
   exit 2
 fi
 if [[ "$version" == "$current_version" ]]; then
-  echo "error: target version is already current: $version" >&2
+  if [[ "$finalize" != "1" ]]; then
+    echo "error: target version is already current: $version" >&2
+    exit 2
+  fi
+elif [[ "$finalize" == "1" ]]; then
+  echo "error: --finalize expects VERSION to match the merged VERSION file ($current_version)" >&2
+  exit 2
+fi
+
+if [[ "$finalize" == "1" && ( "$push" == "1" || "$dry_run" == "1" || "$skip_tests" == "1" || "$allow_empty_notes" == "1" ) ]]; then
+  echo "error: --finalize cannot be combined with --push, --dry-run, --skip-tests, or --allow-empty-notes" >&2
   exit 2
 fi
 
@@ -140,7 +161,7 @@ if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   echo "error: local tag already exists: $tag" >&2
   exit 1
 fi
-if [[ "$push" == "1" && "$dry_run" != "1" ]]; then
+if [[ ( "$push" == "1" || "$finalize" == "1" ) && "$dry_run" != "1" ]]; then
   if ! command -v gh >/dev/null 2>&1; then
     echo "error: --push requires GitHub CLI (gh)" >&2
     exit 1
@@ -155,6 +176,94 @@ if [[ "$push" == "1" && "$dry_run" != "1" ]]; then
     echo "error: remote tag already exists: $tag" >&2
     exit 1
   fi
+fi
+
+wait_for_exact_workflow() {
+  local workflow="$1" label="$2" sha="$3" run_id=""
+  echo "[apx:release] waiting for $label on $sha"
+  for _ in $(seq 1 60); do
+    run_id="$(env -u GH_TOKEN gh run list --workflow "$workflow" --limit 40 \
+      --json databaseId,event,headBranch,headSha \
+      --jq ".[] | select(.event == \"push\" and .headBranch == \"main\" and .headSha == \"$sha\") | .databaseId" \
+      | head -n 1)"
+    [[ -n "$run_id" ]] && break
+    sleep 5
+  done
+  if [[ -z "$run_id" ]]; then
+    echo "error: $label did not appear for merged release commit $sha; tag was not created" >&2
+    exit 1
+  fi
+  if ! env -u GH_TOKEN gh run watch "$run_id" --exit-status; then
+    echo "error: $label failed for merged release commit $sha; tag was not created" >&2
+    exit 1
+  fi
+  echo "[apx:release] $label passed for $sha"
+}
+
+if [[ "$finalize" == "1" ]]; then
+  if ! git fetch --quiet origin main; then
+    echo "error: could not refresh origin/main" >&2
+    exit 1
+  fi
+  head_sha="$(git rev-parse HEAD)"
+  remote_sha="$(git rev-parse origin/main)"
+  if [[ "$head_sha" != "$remote_sha" ]]; then
+    echo "error: local main is not synchronized with origin/main" >&2
+    echo "  local:  $head_sha" >&2
+    echo "  remote: $remote_sha" >&2
+    exit 1
+  fi
+  if ! python3 - "$version" <<'FINALIZE_CHANGELOG_PY'
+import re
+import sys
+from pathlib import Path
+
+version = sys.argv[1]
+text = Path("CHANGELOG.md").read_text()
+if not re.search(rf"^## \[?v?{re.escape(version)}\]?(?:\s|$)", text, re.M):
+    raise SystemExit(1)
+FINALIZE_CHANGELOG_PY
+  then
+    echo "error: CHANGELOG.md has no release heading for $version" >&2
+    exit 1
+  fi
+  wait_for_exact_workflow ci.yml "full CI" "$head_sha"
+  wait_for_exact_workflow security.yml "security checks" "$head_sha"
+  git -c tag.gpgSign=false tag "$tag"
+  env -u GH_TOKEN git \
+    -c credential.helper= \
+    -c credential.helper='!gh auth git-credential' \
+    push origin "$tag"
+  echo "[apx:release] pushed $tag at $head_sha"
+
+  if [[ "$watch" == "1" ]]; then
+    run_id=""
+    for _ in $(seq 1 30); do
+      run_id="$(env -u GH_TOKEN gh run list --workflow release.yml --limit 10 --json databaseId,headBranch,headSha --jq ".[] | select(.headBranch == \"$tag\" and .headSha == \"$head_sha\") | .databaseId" | head -n 1)"
+      [[ -n "$run_id" ]] && break
+      sleep 5
+    done
+    if [[ -z "$run_id" ]]; then
+      echo "error: release workflow did not appear for $tag" >&2
+      exit 1
+    fi
+    env -u GH_TOKEN gh run watch "$run_id" --exit-status
+    env -u GH_TOKEN gh release view "$tag" --json tagName,url,isDraft,isPrerelease,publishedAt,assets
+  fi
+  exit 0
+fi
+
+release_branch="release/$tag"
+if [[ "$dry_run" != "1" ]]; then
+  if git show-ref --verify --quiet "refs/heads/$release_branch"; then
+    echo "error: local release branch already exists: $release_branch" >&2
+    exit 1
+  fi
+  if [[ "$push" == "1" ]] && git ls-remote --exit-code --heads origin "refs/heads/$release_branch" >/dev/null 2>&1; then
+    echo "error: remote release branch already exists: $release_branch" >&2
+    exit 1
+  fi
+  git switch -c "$release_branch"
 fi
 
 changelog_action="promote"
@@ -198,10 +307,11 @@ if [[ "$dry_run" == "1" ]]; then
   echo "[apx:release] dry run"
   echo "  version:      $current_version -> $version"
   echo "  changelog:    promote Unreleased to [$version]"
+  echo "  branch:       release/$tag"
   echo "  commit:       Release $version"
-  echo "  tag:          $tag"
+  echo "  tag:          created later by --finalize"
   if [[ "$push" == "1" ]]; then
-    echo "  push:         origin main, require exact-SHA CI, then origin $tag"
+    echo "  push:         origin release/$tag and open a pull request"
   else
     echo "  push:         no"
   fi
@@ -210,7 +320,8 @@ fi
 
 run_validations() {
   bash -n bin/apx get.sh bootstrap.sh install.sh tests/lifecycle.sh build/pack.sh build/header.sh build/release.sh
-  python3 -m py_compile bin/apx-gateway
+  python3 -m py_compile bin/apx-gateway tests/security_properties.py fuzz/gateway_boundaries_fuzzer.py
+  python3 tests/security_properties.py
   git diff --check
   if command -v shellcheck >/dev/null 2>&1; then
     shellcheck --severity=warning install.sh bootstrap.sh get.sh bin/apx bin/apx-squeezr build/pack.sh build/header.sh tests/lifecycle.sh build/release.sh
@@ -251,51 +362,16 @@ if [[ "$push" == "1" ]]; then
   env -u GH_TOKEN git \
     -c credential.helper= \
     -c credential.helper='!gh auth git-credential' \
-    push origin main
-
-  echo "[apx:release] waiting for full CI on $head_sha before tagging"
-  ci_run_id=""
-  for _ in $(seq 1 60); do
-    ci_run_id="$(env -u GH_TOKEN gh run list --workflow ci.yml --limit 30 \
-      --json databaseId,event,headBranch,headSha \
-      --jq ".[] | select(.event == \"push\" and .headBranch == \"main\" and .headSha == \"$head_sha\") | .databaseId" \
-      | head -n 1)"
-    [[ -n "$ci_run_id" ]] && break
-    sleep 5
-  done
-  if [[ -z "$ci_run_id" ]]; then
-    echo "error: CI workflow did not appear for release commit $head_sha; tag was not created" >&2
-    exit 1
+    push --set-upstream origin "$release_branch"
+  pr_url="$(env -u GH_TOKEN gh pr create \
+    --base main \
+    --head "$release_branch" \
+    --title "Release $version" \
+    --body "Prepare LeanRelay/apx $tag. After approval, required checks, and merge, finalize with: \`build/release.sh $version --finalize --watch\`")"
+  echo "[apx:release] opened release PR: $pr_url"
+  if [[ "$watch" == "1" ]]; then
+    env -u GH_TOKEN gh pr checks "$release_branch" --watch --fail-fast
   fi
-  if ! env -u GH_TOKEN gh run watch "$ci_run_id" --exit-status; then
-    echo "error: full CI failed for release commit $head_sha; tag was not created" >&2
-    exit 1
-  fi
-  echo "[apx:release] full CI passed for $head_sha"
-fi
-
-git -c tag.gpgSign=false tag "$tag"
-echo "[apx:release] prepared $tag at $(git rev-parse --short HEAD)"
-
-if [[ "$push" == "1" ]]; then
-  env -u GH_TOKEN git \
-    -c credential.helper= \
-    -c credential.helper='!gh auth git-credential' \
-    push origin "$tag"
-  echo "[apx:release] pushed $tag"
-fi
-
-if [[ "$watch" == "1" ]]; then
-  run_id=""
-  for _ in $(seq 1 30); do
-    run_id="$(env -u GH_TOKEN gh run list --workflow release.yml --limit 10 --json databaseId,headBranch,headSha --jq ".[] | select(.headBranch == \"$tag\" and .headSha == \"$head_sha\") | .databaseId" | head -n 1)"
-    [[ -n "$run_id" ]] && break
-    sleep 5
-  done
-  if [[ -z "$run_id" ]]; then
-    echo "error: release workflow did not appear for $tag" >&2
-    exit 1
-  fi
-  env -u GH_TOKEN gh run watch "$run_id" --exit-status
-  env -u GH_TOKEN gh release view "$tag" --json tagName,url,isDraft,isPrerelease,publishedAt,assets
+else
+  echo "[apx:release] release commit is on $release_branch; inspect it before pushing"
 fi

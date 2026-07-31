@@ -500,9 +500,15 @@ EOF_CHANGELOG
   git -c commit.gpgsign=false commit -q -m baseline
   bash build/release.sh --patch --push --dry-run > "$TMP/release-dry-run.out"
   grep -q 'version:      1.2.3 -> 1.2.4' "$TMP/release-dry-run.out"
-  grep -q 'require exact-SHA CI' "$TMP/release-dry-run.out"
+  grep -q 'branch:       release/v1.2.4' "$TMP/release-dry-run.out"
+  grep -q 'open a pull request' "$TMP/release-dry-run.out"
+  [[ "$(git branch --show-current)" == "main" ]]
   [[ "$(head -n 1 VERSION)" == "1.2.3" ]]
   ! git rev-parse -q --verify refs/tags/v1.2.4 >/dev/null
+  if bash build/release.sh 1.2.3 --finalize --dry-run >/dev/null 2>&1; then
+    echo "ERROR: release helper allowed --finalize with --dry-run" >&2
+    exit 1
+  fi
 )
 
 empty_release_repo="$TMP/release-helper-empty"
@@ -531,6 +537,50 @@ EOF_CHANGELOG
     exit 1
   fi
   bash build/release.sh --patch --dry-run --allow-empty-notes >/dev/null
+)
+
+finalize_release_repo="$TMP/release-helper-finalize"
+finalize_release_origin="$TMP/release-helper-finalize-origin.git"
+finalize_release_stubs="$TMP/release-helper-finalize-stubs"
+mkdir -p "$finalize_release_repo/build" "$finalize_release_stubs"
+cp "$ROOT/build/release.sh" "$finalize_release_repo/build/release.sh"
+cat > "$finalize_release_repo/VERSION" <<'EOF_VERSION'
+1.2.4
+EOF_VERSION
+cat > "$finalize_release_repo/CHANGELOG.md" <<'EOF_CHANGELOG'
+# Changelog
+
+## [Unreleased]
+
+## [1.2.4] - 2026-07-31
+
+- Test finalized release.
+EOF_CHANGELOG
+cat > "$finalize_release_stubs/gh" <<'EOF_GH'
+#!/usr/bin/env bash
+set -eu
+case "${1:-} ${2:-}" in
+  "api user") printf '%s\n' 'mkhalid-s' ;;
+  "run list") printf '%s\n' '101' ;;
+  "run watch") exit 0 ;;
+  *) echo "unexpected gh invocation: $*" >&2; exit 1 ;;
+esac
+EOF_GH
+chmod +x "$finalize_release_stubs/gh"
+git init -q --bare "$finalize_release_origin"
+(
+  cd "$finalize_release_repo"
+  git init -q
+  git checkout -q -b main 2>/dev/null || git branch -m main
+  git config user.email 'mkhalid-s@users.noreply.github.com'
+  git config user.name 'Khalid Shaikh'
+  git add VERSION CHANGELOG.md build/release.sh
+  git -c commit.gpgsign=false commit -q -m 'Release 1.2.4'
+  git remote add origin "$finalize_release_origin"
+  git push -q --set-upstream origin main
+  PATH="$finalize_release_stubs:$PATH" bash build/release.sh 1.2.4 --finalize >/dev/null
+  [[ "$(git rev-parse refs/tags/v1.2.4)" == "$(git rev-parse HEAD)" ]]
+  [[ "$(git --git-dir="$finalize_release_origin" rev-parse refs/tags/v1.2.4)" == "$(git rev-parse HEAD)" ]]
 )
 
 echo lifecycle-ok

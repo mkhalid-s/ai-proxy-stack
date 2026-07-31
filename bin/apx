@@ -880,7 +880,7 @@ remove_service() {
 #
 # Categories:
 #   service     : LaunchAgent plist + running processes (implicit for any purge)
-#   binaries    : ~/.local/bin/apx, apx-gateway, apx-squeezr
+#   binaries    : ~/.local/bin/apx, apx-gateway, its security module, apx-squeezr
 #   share       : ~/.local/share/apx/ (dashboard.html)
 #   state       : ~/.local/state/apx/ (logs, history, run, VERSION)
 #   config      : ~/.config/apx/ (config.env, prices.env, source.path)
@@ -1779,6 +1779,7 @@ do_uninstall_purge() {
     purge_action "remove $HOME/.local/bin/apx*" rm -f \
       "$HOME/.local/bin/apx" \
       "$HOME/.local/bin/apx-gateway" \
+      "$HOME/.local/bin/apx_gateway_security.py" \
       "$HOME/.local/bin/apx-squeezr"
   fi
 
@@ -3638,6 +3639,10 @@ version_dir_is_valid() {
   for f in bin/apx bin/apx-gateway bin/apx-squeezr install.sh VERSION; do
     [[ -e "$dir/$f" ]] || return 1
   done
+  if grep -q '^from apx_gateway_security import' "$dir/bin/apx-gateway" \
+    && [[ ! -e "$dir/bin/apx_gateway_security.py" ]]; then
+    return 1
+  fi
   return 0
 }
 
@@ -3647,7 +3652,7 @@ relink_local_bin() {
   local bin_dir="$HOME/.local/bin"
   mkdir -p "$bin_dir"
   local name
-  for name in apx apx-gateway apx-squeezr; do
+  for name in apx apx-gateway apx_gateway_security.py apx-squeezr; do
     local dst="$bin_dir/$name"
     if [[ -e "$dst" && ! -L "$dst" ]]; then
       mv -f "$dst" "$dst.bak.$(date +%Y%m%d%H%M%S)"

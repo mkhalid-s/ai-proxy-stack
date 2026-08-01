@@ -58,6 +58,10 @@ def validate_policy(data: Any) -> dict[str, Any]:
         raise PolicyError("policy timestamps must be timezone-aware and ordered")
     if expires <= now:
         raise PolicyError("policy is expired")
+    if generated > now + dt.timedelta(minutes=10):
+        raise PolicyError("policy generation time is unreasonably far in the future")
+    if expires - generated > dt.timedelta(days=180):
+        raise PolicyError("policy validity period exceeds 180 days")
     advisories = data.get("advisories")
     if not isinstance(advisories, list) or len(advisories) > 100:
         raise PolicyError("advisories must be an array with at most 100 entries")

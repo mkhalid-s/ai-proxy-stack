@@ -22,6 +22,11 @@ if "$ROOT/bin/apx-advisory" validate "$TMP/invalid.json" >/dev/null 2>&1; then
   echo "ERROR: executable advisory condition was accepted" >&2
   exit 1
 fi
+sed 's/2026-08-01T00:00:00Z/2099-08-01T00:00:00Z/' "$ROOT/advisories/current.json" > "$TMP/future.json"
+if "$ROOT/bin/apx-advisory" validate "$TMP/future.json" >/dev/null 2>&1; then
+  echo "ERROR: future-dated advisory policy was accepted" >&2
+  exit 1
+fi
 
 # Exercise the complete refresh/cache/advisor path with a fake HTTPS transport.
 mkdir -p "$TMP/home/.config/apx" "$TMP/home/.local/bin" "$TMP/home/.local/state/apx" "$TMP/feed"
@@ -60,6 +65,14 @@ advisor_env=(
 refreshed="$(env "${advisor_env[@]}" "$ROOT/bin/apx" config advise --refresh --json)"
 [[ "$refreshed" == *'"id":"pxpipe-remote-policy-test"'* ]]
 test -s "$TMP/home/.local/state/apx/advisories.json"
+cached_digest="$(sha256sum "$TMP/home/.local/state/apx/advisories.json" | awk '{print $1}')"
+sed -i 's/Review Claude Opus 5 image conversion/Changed content with reused revision/' "$TMP/feed/current.json"
+sha256sum "$TMP/feed/current.json" | awk '{print $1"  current.json"}' > "$TMP/feed/current.json.sha256"
+if env "${advisor_env[@]}" "$ROOT/bin/apx" config advise --refresh --json >/dev/null 2>&1; then
+  echo "ERROR: changed advisory content reused an existing revision" >&2
+  exit 1
+fi
+[[ "$(sha256sum "$TMP/home/.local/state/apx/advisories.json" | awk '{print $1}')" == "$cached_digest" ]]
 env "${advisor_env[@]}" "$ROOT/bin/apx" config advise --dismiss pxpipe-remote-policy-test >/dev/null
 active="$(env "${advisor_env[@]}" "$ROOT/bin/apx" config advise --json)"
 [[ "$active" != *'"id":"pxpipe-remote-policy-test"'* ]]

@@ -331,6 +331,11 @@ raw values. Normal CLI use refreshes the policy in the background at most once
 per day. Failed, malformed, expired, oversized, or older revisions never
 replace the last known-good cache.
 
+The default source is the repository's `advisory-policy` prerelease channel,
+which is updated only after schema, hostile-fixture, checksum, and provenance
+gates pass. It is marked prerelease so it cannot replace the latest APX product
+release used by `apx check-updates`.
+
 The gateway reads only the verified cache through `GET /api/advisories`. It
 never downloads policy itself. The schema has no command field, and cached
 findings cannot invoke `--apply-safe`; remote automatic remediation is not

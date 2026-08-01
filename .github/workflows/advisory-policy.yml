@@ -18,6 +18,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: advisory-policy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     name: Validate non-executable policy
@@ -30,13 +34,13 @@ jobs:
       - name: Validate schema, checksum, and hostile fixtures
         run: bash tests/advisory-policy.sh
 
-  attest:
-    name: Attest published policy
+  publish:
+    name: Attest and publish policy
     if: github.event_name == 'push'
     needs: validate
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       id-token: write
       attestations: write
     steps:
@@ -47,3 +51,39 @@ jobs:
           subject-path: |
             advisories/current.json
             advisories/current.json.sha256
+      - name: Publish gated advisory channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view advisory-policy >/dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/existing-policy"
+            gh release download advisory-policy \
+              --pattern current.json \
+              --dir "$RUNNER_TEMP/existing-policy"
+            python3 - "$RUNNER_TEMP/existing-policy/current.json" advisories/current.json <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          old_path, new_path = map(pathlib.Path, sys.argv[1:])
+          old = json.loads(old_path.read_text(encoding="utf-8"))
+          new = json.loads(new_path.read_text(encoding="utf-8"))
+          if new["revision"] < old["revision"]:
+              raise SystemExit("refusing advisory policy revision rollback")
+          if new["revision"] == old["revision"]:
+              old_digest = hashlib.sha256(old_path.read_bytes()).digest()
+              new_digest = hashlib.sha256(new_path.read_bytes()).digest()
+              if old_digest != new_digest:
+                  raise SystemExit("refusing changed policy content with a reused revision")
+          PY
+          else
+            gh release create advisory-policy \
+              --prerelease \
+              --title "LeanRelay advisory policy channel" \
+              --notes "Machine-readable, non-executable advisory policy. This is not an APX product release."
+          fi
+          gh release upload advisory-policy \
+            advisories/current.json \
+            advisories/current.json.sha256 \
+            --clobber

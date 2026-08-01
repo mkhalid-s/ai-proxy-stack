@@ -682,7 +682,8 @@ apx config advise --apply-safe metrics-disabled
 ```
 
 It combines deterministic local facts with a checksum-verified, data-only
-advisory cache. Normal commands refresh that cache in the background at most
+advisory cache published only after its dedicated CI and provenance gates
+pass. Normal commands refresh that cache in the background at most
 once per day; `--refresh` requests an immediate refresh. The policy schema can
 match only allowlisted settings and cannot contain or execute shell commands.
 Remote findings are advisory-only: `--apply-safe` handles compiled-in,

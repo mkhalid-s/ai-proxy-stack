@@ -104,7 +104,7 @@ ADVISORY_CACHE_FILE="$STATE_DIR/advisories.json"
 ADVISORY_CHECK_STAMP_FILE="$STATE_DIR/advisory-check.timestamp"
 ADVISORY_REFRESH_LOCK_DIR="$STATE_DIR/advisory-refresh.lock"
 APX_RELEASE_REPO="${APX_RELEASE_REPO:-mkhalid-s/lean-relay}"
-ADVISORY_POLICY_URL="${APX_ADVISORY_URL:-https://raw.githubusercontent.com/$APX_RELEASE_REPO/main/advisories/current.json}"
+ADVISORY_POLICY_URL="${APX_ADVISORY_URL:-https://github.com/$APX_RELEASE_REPO/releases/download/advisory-policy/current.json}"
 ADVISORY_POLICY_SHA_URL="${APX_ADVISORY_SHA_URL:-${ADVISORY_POLICY_URL}.sha256}"
 RELEASE_ASSET_URL="${APX_RELEASE_ASSET_URL:-https://github.com/$APX_RELEASE_REPO/releases/latest/download/apx.sh}"
 RELEASE_ASSET_SHA_URL="${APX_RELEASE_ASSET_SHA_URL:-${RELEASE_ASSET_URL}.sha256}"
@@ -1155,7 +1155,7 @@ advisory_sync() (
   case "$ADVISORY_POLICY_URL" in http://*) [[ "${APX_ADVISORY_ALLOW_HTTP:-0}" == "1" ]] || { echo "refusing non-HTTPS advisory URL" >&2; return 1; } ;; esac
   case "$ADVISORY_POLICY_SHA_URL" in http://*) [[ "${APX_ADVISORY_ALLOW_HTTP:-0}" == "1" ]] || { echo "refusing non-HTTPS advisory checksum URL" >&2; return 1; } ;; esac
   mkdir -p "$STATE_DIR"
-  local tmp_dir policy checksum expected actual current_revision incoming_revision
+  local tmp_dir policy checksum expected actual current_revision incoming_revision current_digest
   tmp_dir="$(mktemp -d "$STATE_DIR/advisory-download.XXXXXX")" || return 1
   trap 'rm -rf "$tmp_dir"' EXIT
   policy="$tmp_dir/current.json"
@@ -1171,8 +1171,13 @@ advisory_sync() (
   incoming_revision="$(advisory_policy_revision "$policy")"
   current_revision="$(advisory_policy_revision "$ADVISORY_CACHE_FILE")"
   (( incoming_revision >= current_revision )) || { echo "refusing advisory policy rollback" >&2; return 1; }
+  if [[ -f "$ADVISORY_CACHE_FILE" && "$incoming_revision" == "$current_revision" ]]; then
+    current_digest="$(advisory_file_sha256 "$ADVISORY_CACHE_FILE")"
+    [[ "$actual" == "$current_digest" ]] || { echo "refusing changed advisory content with a reused revision" >&2; return 1; }
+  fi
   chmod 600 "$policy"
   mv "$policy" "$ADVISORY_CACHE_FILE"
+  touch "$ADVISORY_CHECK_STAMP_FILE"
   printf 'advisory policy updated: revision %s\n' "$incoming_revision"
 )
 

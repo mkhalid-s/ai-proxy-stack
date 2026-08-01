@@ -299,6 +299,7 @@ Use `PXPIPE_MODELS=off` to disable image conversion while leaving pxpipe running
 
 ```bash
 apx status
+apx config advise --refresh
 apx mode current
 apx mode headroom-pxpipe
 apx mode pxpipe-headroom
@@ -320,6 +321,20 @@ apx install
 apx stop
 apx uninstall
 ```
+
+### Advisory policy channel
+
+APX evaluates a bounded, data-only policy against local configuration. The
+cache lives at `~/.local/state/apx/advisories.json`; configuration ownership is
+tracked separately in `config-provenance.tsv` using value digests rather than
+raw values. Normal CLI use refreshes the policy in the background at most once
+per day. Failed, malformed, expired, oversized, or older revisions never
+replace the last known-good cache.
+
+The gateway reads only the verified cache through `GET /api/advisories`. It
+never downloads policy itself. The schema has no command field, and cached
+findings cannot invoke `--apply-safe`; remote automatic remediation is not
+supported. Disable refresh with `APX_ADVISORY_CHECK=0` when fully offline.
 
 ## Mode Behavior
 

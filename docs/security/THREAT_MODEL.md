@@ -26,6 +26,8 @@ clearly and avoid widening their access.
 - Optimizer commands, packages, resolved versions, source metadata, and
   ownership records.
 - GitHub source, workflows, tags, checksums, SBOMs, and release artifacts.
+- Advisory policy, checksums, provenance attestations, cached policy, and
+  configuration-ownership metadata.
 
 ## Trust boundaries
 
@@ -73,6 +75,7 @@ are separate trust boundaries. `external` optimizers are not controlled by APX.
 | TM-12 | Dependency or GitHub Action compromise | High | Dependency review, CodeQL, secret scan, pinned Action SHAs, scheduled updates, minimal workflow permissions. |
 | TM-13 | Authentication brute force or reconnaissance is invisible | Moderate | Structured secret-free security events, bounded counters, rate limiting, and operator guidance. |
 | TM-14 | Support bundle exposes secrets or captured traffic | High | Metadata-only collection, layered redaction, explicit inspection warning, seeded secret regression test. |
+| TM-15 | A malicious, stale, or substituted advisory changes user configuration | High | Strict data-only schema, checksum and expiry validation, rollback refusal, bounded downloads, atomic last-known-good cache, compiled-in remediation allowlist, and no automatic remote actions. |
 
 ## Existing controls
 
@@ -84,6 +87,8 @@ are separate trust boundaries. `external` optimizers are not controlled by APX.
 - Optimizer ownership reporting and preservation of external installations.
 - Manifest-backed, containment-checked purge behavior.
 - Checksum-verified release installs and exact-commit/tag CI release gates.
+- A separately gated advisory policy with CODEOWNERS review, schema/checksum
+  validation, GitHub provenance attestations, and local-only evaluation.
 
 ## Residual risks and decisions
 
@@ -95,6 +100,12 @@ are separate trust boundaries. `external` optimizers are not controlled by APX.
 - Checksums fetched from the same release channel detect corruption but not a
   fully compromised publisher. Provenance attestations and protected release
   approval reduce, but do not eliminate, that risk.
+- Advisory checksums fetched beside the policy do not protect against a fully
+  compromised repository. The client therefore treats remote policy as
+  non-executable advice, rejects unknown actions and fields, and never applies
+  remote configuration changes automatically. Published attestations provide
+  an independent audit signal but are not currently a mandatory runtime
+  dependency.
 - A process running as the same operating-system user can generally access that
   user's local state. Filesystem permissions primarily protect against other
   users and accidental disclosure.

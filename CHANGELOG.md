@@ -12,6 +12,15 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
   recall from imaged context. Fresh installs and untouched legacy apx defaults
   exclude it; customized model allowlists remain unchanged.
 
+### Added
+
+- A checksum-verified, expiring, data-only advisory channel with bounded daily
+  refreshes, atomic last-known-good caching, rollback rejection, versioned
+  dismissals, and configuration-ownership metadata.
+- Cached advisories now appear in the existing CLI and dashboard attention
+  surfaces; policy publication has dedicated validation, CODEOWNERS review,
+  and provenance attestation.
+
 ## [0.6.4] - 2026-07-31
 
 ### Added

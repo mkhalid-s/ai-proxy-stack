@@ -1,0 +1,49 @@
+name: Advisory policy
+
+on:
+  pull_request:
+    paths:
+      - advisories/**
+      - bin/apx-advisory
+      - tests/advisory-policy.sh
+      - .github/workflows/advisory-policy.yml
+  push:
+    branches: [main]
+    paths:
+      - advisories/**
+      - bin/apx-advisory
+      - tests/advisory-policy.sh
+      - .github/workflows/advisory-policy.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate non-executable policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Validate schema, checksum, and hostile fixtures
+        run: bash tests/advisory-policy.sh
+
+  attest:
+    name: Attest published policy
+    if: github.event_name == 'push'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Attest policy provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: |
+            advisories/current.json
+            advisories/current.json.sha256

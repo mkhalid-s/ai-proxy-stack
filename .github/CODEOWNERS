@@ -13,6 +13,7 @@
 /build/ @mkhalid-s
 /.github/workflows/ @mkhalid-s
 /config/ @mkhalid-s
+/advisories/ @mkhalid-s
 /tests/ @mkhalid-s
 /SECURITY.md @mkhalid-s
 /docs/security/ @mkhalid-s

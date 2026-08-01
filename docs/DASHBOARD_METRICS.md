@@ -23,7 +23,10 @@ detail at once:
    contribution, native aggregate counters, reachability, measurement
    coverage, latency, bypasses, cost savings when reported, and the native
    dashboard link.
-6. **Activity**: local history size, top models, and recent sessions—including
+6. **Configuration advice**: only active findings from the locally evaluated,
+   verified advisory cache, merged into **Needs Attention** rather than shown
+   as another statistics panel.
+7. **Activity**: local history size, top models, and recent sessions—including
    session-level verified savings—confirm what SQLite retained across restarts.
 
 For diagnosis, use `apx status`, `apx doctor`, `apx logs <service>`, and

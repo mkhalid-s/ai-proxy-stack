@@ -676,18 +676,25 @@ when the dashboard cannot explain token savings:
 ```bash
 apx config advise
 apx config advise --json                 # for scripts and support tooling
+apx config advise --refresh              # refresh the verified advisory cache
 apx config advise --dismiss metrics-disabled
 apx config advise --apply-safe metrics-disabled
 ```
 
-It checks only deterministic local facts: token-metrics availability, known
-pxpipe model capability, externally exposed dashboard protection, non-local
-HTTP upstreams, optimizer ownership, and the cached daily optimizer update
-result. Every finding includes its impact and an exact next command. It never
-contacts a registry or restarts a service. `--apply-safe` only handles listed,
-reversible configuration changes and still requires a separate `apx restart`.
-Dismissals are stored by advisory ID and guidance version under apx state; use
-`--show-all` to review them later.
+It combines deterministic local facts with a checksum-verified, data-only
+advisory cache. Normal commands refresh that cache in the background at most
+once per day; `--refresh` requests an immediate refresh. The policy schema can
+match only allowlisted settings and cannot contain or execute shell commands.
+Remote findings are advisory-only: `--apply-safe` handles compiled-in,
+reversible actions and still requires a separate `apx restart`. Set
+`APX_ADVISORY_CHECK=0` to disable network refreshes without deleting the last
+known-good cache. Dismissals are stored by advisory ID and guidance version;
+use `--show-all` to review them later.
+
+Configuration ownership is recorded separately under apx state. APX-managed
+defaults may be distinguished from explicit or externally managed choices;
+manual changes are conservatively reclassified as user-owned. The current
+advisory channel never mutates either category automatically.
 
 ### Command layout
 

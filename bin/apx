@@ -3324,6 +3324,7 @@ support_bundle() {
 
   APX_UPDATE_CHECK=0 "$0" version > "$tmp/meta/version.txt" 2>&1 || true
   APX_UPDATE_CHECK=0 "$0" status > "$tmp/meta/status.txt" 2>&1 || true
+  APX_UPDATE_CHECK=0 APX_ADVISORY_CHECK=0 "$0" config advise --json > "$tmp/meta/advisories.json" 2>&1 || true
   "$0" urls > "$tmp/meta/urls.txt" 2>&1 || true
   {
     echo "generated: $(now)"

@@ -83,6 +83,7 @@ APX_METRICS_DB=OFF
 EOF
 
 export APX_CONFIG="$HOME/.config/apx/config.env"
+export APX_ADVISORY_CHECK=0
 
 # Terminal color is interactive-only by default, forceable for terminals that
 # need it, and always suppressed by the NO_COLOR convention.

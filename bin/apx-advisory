@@ -142,13 +142,19 @@ def main() -> int:
     evaluate_parser = subparsers.add_parser("evaluate")
     evaluate_parser.add_argument("policy", type=Path)
     evaluate_parser.add_argument("--config", required=True, type=Path)
+    evaluate_parser.add_argument("--format", choices=("json", "tsv"), default="json")
     args = parser.parse_args()
     try:
         policy = load_policy(args.policy)
         if args.command == "validate":
             print(json.dumps({"schema_version": policy["schema_version"], "revision": policy["revision"], "advisories": len(policy["advisories"])}, separators=(",", ":")))
         else:
-            print(json.dumps(evaluate(policy, args.config), separators=(",", ":")))
+            active = evaluate(policy, args.config)
+            if args.format == "json":
+                print(json.dumps(active, separators=(",", ":")))
+            else:
+                for item in active:
+                    print("\t".join((item["id"], str(item["guidance_version"]), item["severity"], item["category"], item["title"], item["impact"], item["remediation_command"])))
     except PolicyError as exc:
         print(f"invalid advisory policy: {exc}", file=sys.stderr)
         return 2

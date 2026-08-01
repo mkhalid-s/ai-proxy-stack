@@ -5,7 +5,7 @@
   "expires_at": "2026-11-01T00:00:00Z",
   "advisories": [
     {
-      "id": "pxpipe-opus-5-image-recall",
+      "id": "pxpipe-models-opus-5-enabled",
       "guidance_version": 1,
       "severity": "warning",
       "category": "correctness",

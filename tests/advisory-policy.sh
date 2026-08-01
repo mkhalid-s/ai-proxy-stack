@@ -17,6 +17,21 @@ result="$("$ROOT/bin/apx-advisory" evaluate "$ROOT/advisories/current.json" --co
 [[ "$result" == *'"id":"pxpipe-models-opus-5-enabled"'* ]]
 [[ "$result" == *'"remediation_command":"apx pxpipe models set claude-fable-5"'* ]]
 
+cat > "$TMP/duplicate-config.env" <<'EOF'
+PXPIPE_MODELS="claude-fable-5"
+PXPIPE_MODELS="claude-opus-5"
+EOF
+duplicate_result="$("$ROOT/bin/apx-advisory" evaluate "$ROOT/advisories/current.json" --config "$TMP/duplicate-config.env")"
+[[ "$duplicate_result" == *'"id":"pxpipe-models-opus-5-enabled"'* ]]
+[[ "$duplicate_result" == *'"remediation_command":"apx pxpipe models set off"'* ]]
+
+cat > "$TMP/malformed-config.env" <<'EOF'
+PXPIPE_MODELS="claude-opus-5,bad;touch-pwned"
+EOF
+malformed_result="$("$ROOT/bin/apx-advisory" evaluate "$ROOT/advisories/current.json" --config "$TMP/malformed-config.env")"
+[[ "$malformed_result" == *'"remediation_command":"apx pxpipe models get"'* ]]
+[[ "$malformed_result" != *'touch-pwned'* ]]
+
 sed 's/"type": "list_contains"/"type": "run_shell"/' "$ROOT/advisories/current.json" > "$TMP/invalid.json"
 if "$ROOT/bin/apx-advisory" validate "$TMP/invalid.json" >/dev/null 2>&1; then
   echo "ERROR: executable advisory condition was accepted" >&2
@@ -62,6 +77,10 @@ advisor_env=(
   APX_ADVISORY_URL="https://policy.invalid/current.json"
   APX_ADVISORY_SHA_URL="https://policy.invalid/current.json.sha256"
 )
+if env "${advisor_env[@]}" APX_ADVISORY_URL="file:///etc/passwd" "$ROOT/bin/apx" config advise --refresh --json >/dev/null 2>&1; then
+  echo "ERROR: advisory refresh accepted a local-file URL" >&2
+  exit 1
+fi
 refreshed="$(env "${advisor_env[@]}" "$ROOT/bin/apx" config advise --refresh --json)"
 [[ "$refreshed" == *'"id":"pxpipe-remote-policy-test"'* ]]
 test -s "$TMP/home/.local/state/apx/advisories.json"

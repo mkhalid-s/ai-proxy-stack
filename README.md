@@ -847,6 +847,7 @@ mirrors for macOS privacy compatibility and Linux XDG portability.
 ```text
 ~/.local/bin/apx
 ~/.local/bin/apx-gateway
+~/.local/bin/apx-advisory       # internal policy validator
 ~/.local/bin/apx-squeezr
 ~/.config/apx/config.env
 ~/.local/state/apx/

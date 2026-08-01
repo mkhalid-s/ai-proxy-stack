@@ -892,7 +892,7 @@ remove_service() {
 #
 # Categories:
 #   service     : LaunchAgent plist + running processes (implicit for any purge)
-#   binaries    : ~/.local/bin/apx, apx-gateway, its security module, apx-squeezr
+#   binaries    : ~/.local/bin/apx, apx-gateway, apx-advisory, security module, apx-squeezr
 #   share       : ~/.local/share/apx/ (dashboard.html)
 #   state       : ~/.local/state/apx/ (logs, history, run, VERSION)
 #   config      : ~/.config/apx/ (config.env, prices.env, source.path)
@@ -1152,16 +1152,25 @@ advisory_sync() (
   }
   command -v curl >/dev/null 2>&1 || { echo "advisory refresh requires curl" >&2; return 1; }
   [[ -x "$ADVISORY_HELPER" ]] || { echo "advisory validator unavailable: $ADVISORY_HELPER" >&2; return 1; }
-  case "$ADVISORY_POLICY_URL" in http://*) [[ "${APX_ADVISORY_ALLOW_HTTP:-0}" == "1" ]] || { echo "refusing non-HTTPS advisory URL" >&2; return 1; } ;; esac
-  case "$ADVISORY_POLICY_SHA_URL" in http://*) [[ "${APX_ADVISORY_ALLOW_HTTP:-0}" == "1" ]] || { echo "refusing non-HTTPS advisory checksum URL" >&2; return 1; } ;; esac
+  local allowed_protocols="=https"
+  case "$ADVISORY_POLICY_URL" in
+    https://*) ;;
+    http://*) [[ "${APX_ADVISORY_ALLOW_HTTP:-0}" == "1" ]] || { echo "refusing non-HTTPS advisory URL" >&2; return 1; }; allowed_protocols="=http,https" ;;
+    *) echo "refusing unsupported advisory URL scheme" >&2; return 1 ;;
+  esac
+  case "$ADVISORY_POLICY_SHA_URL" in
+    https://*) ;;
+    http://*) [[ "${APX_ADVISORY_ALLOW_HTTP:-0}" == "1" ]] || { echo "refusing non-HTTPS advisory checksum URL" >&2; return 1; }; allowed_protocols="=http,https" ;;
+    *) echo "refusing unsupported advisory checksum URL scheme" >&2; return 1 ;;
+  esac
   mkdir -p "$STATE_DIR"
   local tmp_dir policy checksum expected actual current_revision incoming_revision current_digest
   tmp_dir="$(mktemp -d "$STATE_DIR/advisory-download.XXXXXX")" || return 1
   trap 'rm -rf "$tmp_dir"' EXIT
   policy="$tmp_dir/current.json"
   checksum="$tmp_dir/current.json.sha256"
-  curl -fsSL --max-time 10 --max-filesize 262144 "$ADVISORY_POLICY_URL" -o "$policy"
-  curl -fsSL --max-time 10 --max-filesize 4096 "$ADVISORY_POLICY_SHA_URL" -o "$checksum"
+  curl -fsSL --proto "$allowed_protocols" --proto-redir "$allowed_protocols" --max-time 10 --max-filesize 262144 -o "$policy" -- "$ADVISORY_POLICY_URL"
+  curl -fsSL --proto "$allowed_protocols" --proto-redir "$allowed_protocols" --max-time 10 --max-filesize 4096 -o "$checksum" -- "$ADVISORY_POLICY_SHA_URL"
   expected="$(awk 'NR == 1 { print $1 }' "$checksum")"
   [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "invalid advisory checksum document" >&2; return 1; }
   expected="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
@@ -1928,6 +1937,7 @@ do_uninstall_purge() {
     purge_action "remove $HOME/.local/bin/apx*" rm -f \
       "$HOME/.local/bin/apx" \
       "$HOME/.local/bin/apx-gateway" \
+      "$HOME/.local/bin/apx-advisory" \
       "$HOME/.local/bin/apx_gateway_security.py" \
       "$HOME/.local/bin/apx-squeezr"
   fi
@@ -2020,7 +2030,7 @@ set_config_var() {
 
 config_line_digest() {
   local key="$1" line
-  line="$(grep -E "^${key}=" "$CONFIG_FILE" | head -n 1 || true)"
+  line="$(grep -E "^${key}=" "$CONFIG_FILE" | tail -n 1 || true)"
   if command -v sha256sum >/dev/null 2>&1; then
     printf '%s' "$line" | sha256sum | awk '{print $1}'
   elif command -v shasum >/dev/null 2>&1; then
@@ -3857,6 +3867,10 @@ version_dir_is_valid() {
   for f in bin/apx bin/apx-gateway bin/apx-squeezr install.sh VERSION; do
     [[ -e "$dir/$f" ]] || return 1
   done
+  if grep -q 'apx-advisory' "$dir/bin/apx" \
+    && [[ ! -e "$dir/bin/apx-advisory" ]]; then
+    return 1
+  fi
   if grep -q '^from apx_gateway_security import' "$dir/bin/apx-gateway" \
     && [[ ! -e "$dir/bin/apx_gateway_security.py" ]]; then
     return 1
@@ -3870,8 +3884,12 @@ relink_local_bin() {
   local bin_dir="$HOME/.local/bin"
   mkdir -p "$bin_dir"
   local name
-  for name in apx apx-gateway apx_gateway_security.py apx-squeezr; do
+  for name in apx apx-gateway apx-advisory apx_gateway_security.py apx-squeezr; do
     local dst="$bin_dir/$name"
+    if [[ ! -e "$CURRENT_LINK/bin/$name" ]]; then
+      [[ ! -L "$dst" ]] || rm -f "$dst"
+      continue
+    fi
     if [[ -e "$dst" && ! -L "$dst" ]]; then
       mv -f "$dst" "$dst.bak.$(date +%Y%m%d%H%M%S)"
     fi

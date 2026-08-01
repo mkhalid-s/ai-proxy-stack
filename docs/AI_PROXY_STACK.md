@@ -152,6 +152,7 @@ Source files in this repo:
 ```text
 ./bin/apx
 ./bin/apx-gateway
+./bin/apx-advisory
 ./bin/apx-squeezr
 ./config/config.env
 ./share/dashboard.html
@@ -165,6 +166,7 @@ Runtime mirrors:
 ```text
 ~/.local/bin/apx
 ~/.local/bin/apx-gateway
+~/.local/bin/apx-advisory
 ~/.local/bin/apx-squeezr
 ~/.config/apx/config.env
 ~/.config/apx/service.backend

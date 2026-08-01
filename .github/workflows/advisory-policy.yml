@@ -45,22 +45,18 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Attest policy provenance
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
-        with:
-          subject-path: |
-            advisories/current.json
-            advisories/current.json.sha256
-      - name: Publish gated advisory channel
+      - name: Refuse channel rollback or revision reuse
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view advisory-policy >/dev/null 2>&1; then
             mkdir -p "$RUNNER_TEMP/existing-policy"
-            gh release download advisory-policy \
-              --pattern current.json \
-              --dir "$RUNNER_TEMP/existing-policy"
-            python3 - "$RUNNER_TEMP/existing-policy/current.json" advisories/current.json <<'PY'
+            has_policy="$(gh release view advisory-policy --json assets --jq 'any(.assets[]; .name == "current.json")')"
+            if [ "$has_policy" = true ]; then
+              gh release download advisory-policy \
+                --pattern current.json \
+                --dir "$RUNNER_TEMP/existing-policy"
+              python3 - "$RUNNER_TEMP/existing-policy/current.json" advisories/current.json <<'PY'
           import hashlib
           import json
           import pathlib
@@ -76,8 +72,24 @@ jobs:
               new_digest = hashlib.sha256(new_path.read_bytes()).digest()
               if old_digest != new_digest:
                   raise SystemExit("refusing changed policy content with a reused revision")
+          old_guidance = {item["id"]: item["guidance_version"] for item in old["advisories"]}
+          for item in new["advisories"]:
+              if item["id"] in old_guidance and item["guidance_version"] < old_guidance[item["id"]]:
+                  raise SystemExit(f"refusing guidance rollback for {item['id']}")
           PY
-          else
+            fi
+          fi
+      - name: Attest policy provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: |
+            advisories/current.json
+            advisories/current.json.sha256
+      - name: Publish gated advisory channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view advisory-policy >/dev/null 2>&1; then
             gh release create advisory-policy \
               --prerelease \
               --title "LeanRelay advisory policy channel" \

@@ -26,7 +26,7 @@ cp "$ROOT/advisories/current.json" "$TMP/state/advisories.json"
 cat > "$TMP/config.env" <<'EOF'
 PXPIPE_MODELS="claude-fable-5,claude-opus-5"
 EOF
-printf 'PXPIPE_MODELS\tuser-explicit\tfixture\t0.6.5\n' > "$TMP/state/config-provenance.tsv"
+printf 'PXPIPE_MODELS\tmanaged-default\tstale-digest\t0.6.5\n' > "$TMP/state/config-provenance.tsv"
 
 start_gateway() {
   APX_DASHBOARD_ENABLED=1 \

@@ -716,6 +716,7 @@ jobs:
           bash dist/apx.sh --extract-to "$extract_dir"
           test -x "$extract_dir/bin/apx"
           test -x "$extract_dir/bin/apx-gateway"
+          test -x "$extract_dir/bin/apx-advisory"
           test -x "$extract_dir/bin/apx-squeezr"
           test -f "$extract_dir/share/dashboard.html"
           test -s "$extract_dir/share/dashboard/app.js"
@@ -815,6 +816,7 @@ jobs:
         run: |
           test -L "$FAKE_HOME/.local/bin/apx"
           test -L "$FAKE_HOME/.local/bin/apx-gateway"
+          test -L "$FAKE_HOME/.local/bin/apx-advisory"
           test -L "$FAKE_HOME/.local/bin/apx-squeezr"
           test -L "$FAKE_HOME/.local/share/apx/current"
           test -f "$FAKE_HOME/.config/apx/install.mode"
@@ -840,6 +842,23 @@ jobs:
         run: |
           HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/apx" rollback
           HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/apx" versions
+
+      - name: Preserve rollback compatibility with pre-advisory versions
+        run: |
+          current_tag="$(basename "$(readlink "$FAKE_HOME/.local/share/apx/current")")"
+          current_dir="$FAKE_HOME/.local/share/apx/versions/$current_tag"
+          current_apx="$current_dir/bin/apx"
+          legacy_dir="$FAKE_HOME/.local/share/apx/versions/v0.0.0-legacy"
+          mkdir -p "$legacy_dir"
+          cp -R "$current_dir/." "$legacy_dir/"
+          rm -f "$legacy_dir/bin/apx-advisory"
+          printf '#!/usr/bin/env bash\nexit 0\n' > "$legacy_dir/bin/apx"
+          chmod +x "$legacy_dir/bin/apx"
+          HOME="$FAKE_HOME" "$current_apx" use v0.0.0-legacy
+          test ! -e "$FAKE_HOME/.local/bin/apx-advisory"
+          HOME="$FAKE_HOME" "$current_apx" use "$current_tag"
+          test -L "$FAKE_HOME/.local/bin/apx-advisory"
+          rm -rf "$legacy_dir"
 
       - name: apx use / cleanup
         run: |

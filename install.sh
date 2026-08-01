@@ -433,7 +433,7 @@ sync_config() {
 sync_pxpipe_config_provenance() {
   [[ "$CHECK_ONLY" == "1" ]] && return 0
   local key="PXPIPE_MODELS" source recorded current line digest version tmp
-  line="$(grep "^${key}=" "$RUNTIME_CONFIG" | head -n 1 || true)"
+  line="$(grep "^${key}=" "$RUNTIME_CONFIG" | tail -n 1 || true)"
   if command -v sha256sum >/dev/null 2>&1; then
     digest="$(printf '%s' "$line" | sha256sum | awk '{print $1}')"
   elif command -v shasum >/dev/null 2>&1; then
@@ -703,7 +703,7 @@ uninstall() {
     fi
     return 0
   fi
-  run_step "remove runtime command" rm -f "$RUNTIME_BIN" "$RUNTIME_GATEWAY_BIN" "$RUNTIME_GATEWAY_SECURITY" "$RUNTIME_SQUEEZR_BIN"
+  run_step "remove runtime command" rm -f "$RUNTIME_BIN" "$RUNTIME_GATEWAY_BIN" "$RUNTIME_ADVISORY_BIN" "$RUNTIME_GATEWAY_SECURITY" "$RUNTIME_SQUEEZR_BIN"
   log "note: apx CLI was already missing; run install.sh --purge on a source clone to remove state/config"
 }
 

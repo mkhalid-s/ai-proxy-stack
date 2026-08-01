@@ -41,10 +41,10 @@ def validate_policy(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise PolicyError("policy root must be an object")
     _exact_keys(data, {"schema_version", "revision", "generated_at", "expires_at", "advisories"}, "policy")
-    if data.get("schema_version") != 1:
+    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         raise PolicyError("unsupported schema_version")
     revision = data.get("revision")
-    if not isinstance(revision, int) or revision < 1:
+    if type(revision) is not int or revision < 1:
         raise PolicyError("revision must be a positive integer")
     generated_text = _text(data.get("generated_at"), "generated_at", 40)
     expires_text = _text(data.get("expires_at"), "expires_at", 40)
@@ -75,7 +75,7 @@ def validate_policy(data: Any) -> dict[str, Any]:
         if not ID_RE.fullmatch(advisory_id) or advisory_id in seen:
             raise PolicyError(f"{where}.id is invalid or duplicated")
         seen.add(advisory_id)
-        if not isinstance(item.get("guidance_version"), int) or item["guidance_version"] < 1:
+        if type(item.get("guidance_version")) is not int or item["guidance_version"] < 1:
             raise PolicyError(f"{where}.guidance_version must be positive")
         if item.get("severity") not in ALLOWED_SEVERITIES:
             raise PolicyError(f"{where}.severity is unsupported")
@@ -111,16 +111,17 @@ def load_policy(path: Path) -> dict[str, Any]:
 
 def parse_config_value(path: Path, key: str) -> str:
     prefix = f"{key}="
+    result = ""
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.startswith(prefix):
                 value = line[len(prefix):].strip()
                 if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
                     value = value[1:-1]
-                return value
+                result = value
     except OSError:
         return ""
-    return ""
+    return result
 
 
 def evaluate(policy: dict[str, Any], config_path: Path) -> list[dict[str, Any]]:
@@ -132,8 +133,11 @@ def evaluate(policy: dict[str, Any], config_path: Path) -> list[dict[str, Any]]:
         if condition["type"] == "list_contains" and condition["value"] in values:
             result = dict(item)
             remediation = item["remediation"]
-            remaining = [value for value in values if value != remediation["value"]]
-            result["remediation_command"] = f"apx pxpipe models set {','.join(remaining) if remaining else 'off'}"
+            if all(MODEL_RE.fullmatch(value) for value in values):
+                remaining = [value for value in values if value != remediation["value"]]
+                result["remediation_command"] = f"apx pxpipe models set {','.join(remaining) if remaining else 'off'}"
+            else:
+                result["remediation_command"] = "apx pxpipe models get"
             active.append(result)
     return active
 

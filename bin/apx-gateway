@@ -1947,8 +1947,23 @@ def _config_provenance(setting: str) -> str:
         with open(CONFIG_PROVENANCE_PATH, encoding="utf-8") as stream:
             for line in stream:
                 fields = line.rstrip("\n").split("\t")
-                if len(fields) >= 2 and fields[0] == setting:
-                    return fields[1]
+                if len(fields) >= 3 and fields[0] == setting:
+                    source, recorded_digest = fields[1], fields[2]
+                    if source not in {"managed-default", "user-explicit", "external", "unknown"}:
+                        return "unknown"
+                    try:
+                        config_lines = [
+                            value
+                            for value in Path(CONFIG_FILE).read_text(encoding="utf-8").splitlines()
+                            if value.startswith(f"{setting}=")
+                        ]
+                        config_line = config_lines[-1]
+                    except (OSError, IndexError):
+                        return "unknown"
+                    current_digest = hashlib.sha256(config_line.encode()).hexdigest()
+                    if source == "managed-default" and current_digest != recorded_digest:
+                        return "user-explicit"
+                    return source
     except OSError:
         pass
     return "unknown"

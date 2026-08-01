@@ -236,6 +236,7 @@ jobs:
       - name: Verify install layout
         run: |
           test -L "$FAKE_HOME/.local/bin/apx"
+          test -L "$FAKE_HOME/.local/bin/apx-advisory"
           test -L "$FAKE_HOME/.local/share/apx/current"
           test "$(cat "$FAKE_HOME/.config/apx/install.mode")" = "release"
           HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/apx" version

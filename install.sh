@@ -22,6 +22,7 @@ RUNTIME_SOURCE_PATH_FILE="$RUNTIME_CONFIG_DIR/source.path"
 RUNTIME_STATE="$HOME/.local/state/apx"
 RUNTIME_VERSION_FILE="$RUNTIME_STATE/VERSION"
 RUNTIME_INSTALL_MANIFEST="$RUNTIME_STATE/install-manifest.env"
+RUNTIME_CONFIG_PROVENANCE="$RUNTIME_STATE/config-provenance.tsv"
 RUNTIME_SHARE_DIR="$HOME/.local/share/apx"
 RUNTIME_DASHBOARD_HTML="$RUNTIME_SHARE_DIR/dashboard.html"
 RUNTIME_DASHBOARD_STATIC_DIR="$RUNTIME_SHARE_DIR/dashboard"
@@ -427,6 +428,43 @@ sync_config() {
   chmod 600 "$RUNTIME_CONFIG"
 }
 
+sync_pxpipe_config_provenance() {
+  [[ "$CHECK_ONLY" == "1" ]] && return 0
+  local key="PXPIPE_MODELS" source recorded current line digest version tmp
+  line="$(grep "^${key}=" "$RUNTIME_CONFIG" | head -n 1 || true)"
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest="$(printf '%s' "$line" | sha256sum | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    digest="$(printf '%s' "$line" | shasum -a 256 | awk '{print $1}')"
+  else
+    digest="$(python3 - "$line" <<'PY'
+import hashlib
+import sys
+print(hashlib.sha256(sys.argv[1].encode()).hexdigest())
+PY
+)"
+  fi
+  source="$(awk -F '\t' -v key="$key" '$1 == key { value = $2 } END { print value }' "$RUNTIME_CONFIG_PROVENANCE" 2>/dev/null || true)"
+  recorded="$(awk -F '\t' -v key="$key" '$1 == key { value = $3 } END { print value }' "$RUNTIME_CONFIG_PROVENANCE" 2>/dev/null || true)"
+  if [[ -z "$source" ]]; then
+    if [[ "$line" == "$(grep '^PXPIPE_MODELS=' "$SRC_CONFIG" | head -n 1)" ]]; then
+      source="managed-default"
+    else
+      source="user-explicit"
+    fi
+  elif [[ "$recorded" != "$digest" ]]; then
+    source="user-explicit"
+  fi
+  version="${STACK_VERSION:-unknown}"
+  tmp="$(mktemp "$RUNTIME_STATE/config-provenance.XXXXXX")"
+  if [[ -f "$RUNTIME_CONFIG_PROVENANCE" ]]; then
+    awk -F '\t' -v key="$key" '$1 != key' "$RUNTIME_CONFIG_PROVENANCE" > "$tmp"
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$key" "$source" "$digest" "$version" >> "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$RUNTIME_CONFIG_PROVENANCE"
+}
+
 sync_dashboard() {
   if [[ ! -f "$SRC_DASHBOARD_HTML" ]]; then
     warn "no dashboard.html in source tree; dashboard will show a placeholder page"
@@ -504,6 +542,7 @@ sync_runtime() {
   fi
 
   sync_config
+  sync_pxpipe_config_provenance
 
   # A fresh config uses npx by default. If npx is unavailable, switch only
   # that untouched default to npm exec; never rewrite a user-provided command.

@@ -192,6 +192,10 @@ fi
 # Opus 5 image conversion is now an informed opt-in. The advisor offers an
 # explicit, reversible removal only when pxpipe is enabled.
 "$APX" pxpipe models set claude-fable-5,claude-opus-5 --no-restart >/dev/null
+if ! grep -Eq '^PXPIPE_MODELS[[:space:]]+user-explicit[[:space:]]+[0-9a-f]{64}[[:space:]]+' "$APX_STATE/config-provenance.tsv"; then
+  echo "ERROR: explicit pxpipe model configuration did not record user ownership" >&2
+  exit 1
+fi
 "$APX" mode pxpipe --no-restart --no-claude-sync >/dev/null
 advisor_json="$("$APX" config advise --json)"
 if [[ "$advisor_json" != *'"id":"pxpipe-models-opus-5-enabled"'* || "$advisor_json" != *'"safe_to_apply":true'* ]]; then

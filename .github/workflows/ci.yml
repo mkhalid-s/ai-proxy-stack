@@ -609,6 +609,7 @@ jobs:
           HOME="$fake_home" ./install.sh --yes --no-service --skip-deps
           grep -q 'PXPIPE_CMD="npx -y pxpipe-proxy@0.11.1"' "$fake_home/.config/apx/config.env"
           ! grep -q 'PXPIPE_MODELS=.*claude-opus-5' "$fake_home/.config/apx/config.env"
+          grep -Eq '^PXPIPE_MODELS[[:space:]]+managed-default[[:space:]]+[0-9a-f]{64}[[:space:]]+' "$fake_home/.local/state/apx/config-provenance.tsv"
 
           # An untouched previous apx default is safely migrated, while a
           # customized allowlist remains user-owned and unchanged.
@@ -618,6 +619,7 @@ jobs:
           sed -i 's|^PXPIPE_MODELS=.*|PXPIPE_MODELS="claude-fable-5,claude-opus-5"|' "$fake_home/.config/apx/config.env"
           HOME="$fake_home" ./install.sh --yes --no-service --skip-deps
           grep -qx 'PXPIPE_MODELS="claude-fable-5,claude-opus-5"' "$fake_home/.config/apx/config.env"
+          grep -Eq '^PXPIPE_MODELS[[:space:]]+user-explicit[[:space:]]+[0-9a-f]{64}[[:space:]]+' "$fake_home/.local/state/apx/config-provenance.tsv"
 
           # 2) Test fallback when npx is absent
           rm -rf "$fake_home/.config/apx"

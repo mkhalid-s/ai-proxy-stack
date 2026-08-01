@@ -99,6 +99,7 @@ INSTALL_MODE_FILE="$CONFIG_DIR/install.mode"
 INSTALL_MANIFEST_FILE="$STATE_DIR/install-manifest.env"
 OPTIMIZER_UPDATE_CACHE_FILE="$STATE_DIR/optimizer-latest.txt"
 ADVISOR_DISMISSALS_FILE="$STATE_DIR/config-advisor-dismissals.env"
+CONFIG_PROVENANCE_FILE="$STATE_DIR/config-provenance.tsv"
 APX_RELEASE_REPO="${APX_RELEASE_REPO:-mkhalid-s/lean-relay}"
 RELEASE_ASSET_URL="${APX_RELEASE_ASSET_URL:-https://github.com/$APX_RELEASE_REPO/releases/latest/download/apx.sh}"
 RELEASE_ASSET_SHA_URL="${APX_RELEASE_ASSET_SHA_URL:-${RELEASE_ASSET_URL}.sha256}"
@@ -1866,7 +1867,7 @@ EOF
 }
 
 set_config_var() {
-  local key="$1" value="$2" tmp
+  local key="$1" value="$2" source="${3:-user-explicit}" tmp
   tmp="$(mktemp)"
   awk -v key="$key" -v value="$value" '
     BEGIN { done = 0 }
@@ -1875,6 +1876,71 @@ set_config_var() {
     END { if (!done) print key "=" value }
   ' "$CONFIG_FILE" > "$tmp"
   mv "$tmp" "$CONFIG_FILE"
+  case "$key" in
+    PXPIPE_MODELS) config_provenance_record "$key" "$source" ;;
+  esac
+}
+
+config_line_digest() {
+  local key="$1" line
+  line="$(grep -E "^${key}=" "$CONFIG_FILE" | head -n 1 || true)"
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$line" | sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$line" | shasum -a 256 | awk '{print $1}'
+  else
+    python3 - "$line" <<'PY'
+import hashlib
+import sys
+print(hashlib.sha256(sys.argv[1].encode()).hexdigest())
+PY
+  fi
+}
+
+config_provenance_source() {
+  local key="$1"
+  awk -F '\t' -v key="$key" '$1 == key { value = $2 } END { print value }' \
+    "$CONFIG_PROVENANCE_FILE" 2>/dev/null
+}
+
+config_provenance_digest() {
+  local key="$1"
+  awk -F '\t' -v key="$key" '$1 == key { value = $3 } END { print value }' \
+    "$CONFIG_PROVENANCE_FILE" 2>/dev/null
+}
+
+config_provenance_record() {
+  local key="$1" source="$2" digest version tmp
+  case "$source" in managed-default|user-explicit|external|unknown) ;;
+    *) echo "error: invalid configuration provenance source: $source" >&2; return 2 ;;
+  esac
+  digest="$(config_line_digest "$key")"
+  version="$(head -n 1 "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ -n "$version" ]] || version="unknown"
+  mkdir -p "$STATE_DIR"
+  tmp="$(mktemp "$STATE_DIR/config-provenance.XXXXXX")" || return 1
+  if [[ -f "$CONFIG_PROVENANCE_FILE" ]]; then
+    awk -F '\t' -v key="$key" '$1 != key' "$CONFIG_PROVENANCE_FILE" > "$tmp"
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$key" "$source" "$digest" "$version" >> "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$CONFIG_PROVENANCE_FILE"
+}
+
+config_provenance_reconcile_pxpipe_models() {
+  local source recorded current
+  source="$(config_provenance_source PXPIPE_MODELS)"
+  recorded="$(config_provenance_digest PXPIPE_MODELS)"
+  current="$(config_line_digest PXPIPE_MODELS)"
+  if [[ -z "$source" ]]; then
+    if [[ "$PXPIPE_MODELS" == "claude-fable-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5" ]]; then
+      config_provenance_record PXPIPE_MODELS managed-default
+    else
+      config_provenance_record PXPIPE_MODELS user-explicit
+    fi
+  elif [[ "$recorded" != "$current" ]]; then
+    config_provenance_record PXPIPE_MODELS user-explicit
+  fi
 }
 
 # --- chain-based routing ----------------------------------------------------

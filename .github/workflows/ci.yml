@@ -608,6 +608,16 @@ jobs:
           # 1) Test when npx is present
           HOME="$fake_home" ./install.sh --yes --no-service --skip-deps
           grep -q 'PXPIPE_CMD="npx -y pxpipe-proxy@0.11.1"' "$fake_home/.config/apx/config.env"
+          ! grep -q 'PXPIPE_MODELS=.*claude-opus-5' "$fake_home/.config/apx/config.env"
+
+          # An untouched previous apx default is safely migrated, while a
+          # customized allowlist remains user-owned and unchanged.
+          sed -i 's|^PXPIPE_MODELS=.*|PXPIPE_MODELS="claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5"|' "$fake_home/.config/apx/config.env"
+          HOME="$fake_home" ./install.sh --yes --no-service --skip-deps
+          ! grep -q 'PXPIPE_MODELS=.*claude-opus-5' "$fake_home/.config/apx/config.env"
+          sed -i 's|^PXPIPE_MODELS=.*|PXPIPE_MODELS="claude-fable-5,claude-opus-5"|' "$fake_home/.config/apx/config.env"
+          HOME="$fake_home" ./install.sh --yes --no-service --skip-deps
+          grep -qx 'PXPIPE_MODELS="claude-fable-5,claude-opus-5"' "$fake_home/.config/apx/config.env"
 
           # 2) Test fallback when npx is absent
           rm -rf "$fake_home/.config/apx"

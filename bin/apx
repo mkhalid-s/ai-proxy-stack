@@ -150,7 +150,7 @@ load_config() {
   : "${PXPIPE_CMD:=npx -y $PXPIPE_PACKAGE_SPEC}"
   : "${SQUEEZR_CMD:=$HOME/.local/bin/apx-squeezr}"
   : "${SQUEEZR_PACKAGE_SPEC:=squeezr-ai@1.99.2}"
-  : "${PXPIPE_MODELS:=claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5}"
+  : "${PXPIPE_MODELS:=claude-fable-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5}"
   : "${HEADROOM_CMD:=headroom proxy}"
   : "${PXPIPE_TARGET_API_URL:=https://api.anthropic.com}"
   : "${HEADROOM_TARGET_API_URL:=http://$APX_INTERNAL_HOST:$PXPIPE_PORT}"
@@ -1122,7 +1122,7 @@ advisor_is_dismissed() {
 advisor_dismiss() {
   local id="$1"
   case "$id" in
-    metrics-disabled|pxpipe-models-missing-opus-5|dashboard-exposed-without-token|insecure-upstream|headroom-external-ownership|optimizer-update-available) ;;
+    metrics-disabled|pxpipe-models-opus-5-enabled|dashboard-exposed-without-token|insecure-upstream|headroom-external-ownership|optimizer-update-available) ;;
     *) echo "unknown advisory: $id" >&2; return 2 ;;
   esac
   mkdir -p "$STATE_DIR"
@@ -1135,7 +1135,7 @@ advisor_dismiss() {
 
 advisor_is_safe_to_apply() {
   case "$1" in
-    metrics-disabled|pxpipe-models-missing-opus-5) return 0 ;;
+    metrics-disabled|pxpipe-models-opus-5-enabled) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -1153,7 +1153,7 @@ advisor_apply_safe() {
       echo "applied: APX_METRICS_DB=$STATE_DIR/metrics.db"
       echo "not restarted; run: apx restart"
       ;;
-    pxpipe-models-missing-opus-5)
+    pxpipe-models-opus-5-enabled)
       if [[ "$PXPIPE_ENABLED" != "1" ]]; then
         echo "refusing: pxpipe is not enabled in the configured chain" >&2
         return 1
@@ -1162,16 +1162,16 @@ advisor_apply_safe() {
         echo "refusing: pxpipe image conversion is intentionally disabled" >&2
         return 1
       fi
-      if [[ ",${PXPIPE_MODELS}," == *",claude-opus-5,"* ]]; then
-        echo "no change: Claude Opus 5 is already in PXPIPE_MODELS"
+      if [[ ",${PXPIPE_MODELS}," != *",claude-opus-5,"* ]]; then
+        echo "no change: Claude Opus 5 is not in PXPIPE_MODELS"
         return 0
       fi
       if ! pxpipe_models_valid "$PXPIPE_MODELS"; then
         echo "refusing: PXPIPE_MODELS is not a valid explicit model list" >&2
         return 1
       fi
-      set_config_var PXPIPE_MODELS "$(config_quote "$PXPIPE_MODELS,claude-opus-5")"
-      echo "applied: added claude-opus-5 to PXPIPE_MODELS"
+      set_config_var PXPIPE_MODELS "$(config_quote "$(pxpipe_models_without "$PXPIPE_MODELS" claude-opus-5)")"
+      echo "applied: removed claude-opus-5 from PXPIPE_MODELS"
       echo "not restarted; run: apx restart"
       ;;
     *)
@@ -1189,6 +1189,17 @@ advisor_json_escape() {
   value="${value//$'\r'/\\r}"
   value="${value//$'\t'/\\t}"
   printf '%s' "$value"
+}
+
+pxpipe_models_without() {
+  local models="$1" excluded="$2" model result=""
+  local -a configured
+  IFS=, read -r -a configured <<< "$models"
+  for model in "${configured[@]}"; do
+    [[ "$model" == "$excluded" ]] && continue
+    if [[ -n "$result" ]]; then result="$result,$model"; else result="$model"; fi
+  done
+  printf '%s' "${result:-off}"
 }
 
 durable_metrics_disabled() {
@@ -1226,12 +1237,12 @@ advisor_rules() {
       "The dashboard cannot verify token consumption or savings while metrics are disabled." \
       "Set APX_METRICS_DB=$STATE_DIR/metrics.db in $CONFIG_FILE, then run: apx restart"
   fi
-  if [[ "$PXPIPE_ENABLED" == "1" && "$PXPIPE_MODELS" != "off" && ",${PXPIPE_MODELS}," != *",claude-opus-5,"* ]]; then
-    model_remediation="$PXPIPE_MODELS,claude-opus-5"
+  if [[ "$PXPIPE_ENABLED" == "1" && "$PXPIPE_MODELS" != "off" && ",${PXPIPE_MODELS}," == *",claude-opus-5,"* ]]; then
+    model_remediation="$(pxpipe_models_without "$PXPIPE_MODELS" claude-opus-5)"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      pxpipe-models-missing-opus-5 1 info capability \
-      "Add Claude Opus 5 to pxpipe's image-model allowlist" \
-      "pxpipe will pass Claude Opus 5 through without image conversion until it is explicitly allowed." \
+      pxpipe-models-opus-5-enabled 1 warning correctness \
+      "Review Claude Opus 5 image conversion" \
+      "pxpipe reports weak exact recall for Opus 5 imaged context; keep it enabled only as an informed opt-in." \
       "Run: apx pxpipe models set $model_remediation"
   fi
   if [[ "$BIND_HOST" != "127.0.0.1" && "$BIND_HOST" != "::1" && "$BIND_HOST" != "localhost" && -z "$APX_DASHBOARD_TOKEN" ]]; then

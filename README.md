@@ -726,11 +726,18 @@ Squeezr dashboard:http://127.0.0.1:18780/squeezr/dashboard
 
 `PXPIPE_MODELS` in `~/.config/apx/config.env` is the persistent source of truth for which model bases pxpipe may convert to images. Dashboard model chips are useful for live experiments, but they are runtime-only and reset when pxpipe restarts.
 
-The default stack template opts in the current known model bases:
+The default stack template opts in the current known model bases except Claude
+Opus 5:
 
 ```bash
-PXPIPE_MODELS="claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5"
+PXPIPE_MODELS="claude-fable-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5"
 ```
+
+Claude Opus 5 remains supported as an explicit opt-in, but is excluded from
+the default because pxpipe's evaluation found weak exact recall from imaged
+context. Enable it only after reviewing that correctness tradeoff. Upgrades
+migrate only the exact previous apx-managed default; customized allowlists are
+preserved.
 
 Set `PXPIPE_MODELS=off` to disable image conversion while keeping pxpipe as a pass-through logging/dashboard proxy. pxpipe does not support a wildcard; add future model bases explicitly.
 

@@ -6,6 +6,12 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Opus 5 image conversion is now opt-in after pxpipe reported weak exact
+  recall from imaged context. Fresh installs and untouched legacy apx defaults
+  exclude it; customized model allowlists remain unchanged.
+
 ## [0.6.4] - 2026-07-31
 
 ### Added

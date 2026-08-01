@@ -66,6 +66,7 @@ copy_tree() {
 
 copy bin/apx                bin/apx
 copy bin/apx-gateway        bin/apx-gateway
+copy bin/apx-advisory       bin/apx-advisory
 copy bin/apx_gateway_security.py bin/apx_gateway_security.py
 copy bin/apx-squeezr        bin/apx-squeezr
 copy share/dashboard.html   share/dashboard.html

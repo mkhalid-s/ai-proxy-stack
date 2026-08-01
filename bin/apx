@@ -100,7 +100,10 @@ INSTALL_MANIFEST_FILE="$STATE_DIR/install-manifest.env"
 OPTIMIZER_UPDATE_CACHE_FILE="$STATE_DIR/optimizer-latest.txt"
 ADVISOR_DISMISSALS_FILE="$STATE_DIR/config-advisor-dismissals.env"
 CONFIG_PROVENANCE_FILE="$STATE_DIR/config-provenance.tsv"
+ADVISORY_CACHE_FILE="$STATE_DIR/advisories.json"
 APX_RELEASE_REPO="${APX_RELEASE_REPO:-mkhalid-s/lean-relay}"
+ADVISORY_POLICY_URL="${APX_ADVISORY_URL:-https://raw.githubusercontent.com/$APX_RELEASE_REPO/main/advisories/current.json}"
+ADVISORY_POLICY_SHA_URL="${APX_ADVISORY_SHA_URL:-${ADVISORY_POLICY_URL}.sha256}"
 RELEASE_ASSET_URL="${APX_RELEASE_ASSET_URL:-https://github.com/$APX_RELEASE_REPO/releases/latest/download/apx.sh}"
 RELEASE_ASSET_SHA_URL="${APX_RELEASE_ASSET_SHA_URL:-${RELEASE_ASSET_URL}.sha256}"
 RUN_DIR="${APX_RUN_DIR:-${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/apx}}"
@@ -119,6 +122,12 @@ export PATH="${APX_PATH:-$DEFAULT_PATH}:$PATH"
 APX_SERVICE_BACKEND_OVERRIDE="${APX_SERVICE_BACKEND:-}"
 APX_CLIENT_BASE_URL_OVERRIDE="${APX_CLIENT_BASE_URL:-}"
 APX_CLIENT_TOPOLOGY_OVERRIDE="${APX_CLIENT_TOPOLOGY:-}"
+
+if [[ -x "$SCRIPT_DIR/apx-advisory" ]]; then
+  ADVISORY_HELPER="$SCRIPT_DIR/apx-advisory"
+else
+  ADVISORY_HELPER="$HOME/.local/bin/apx-advisory"
+fi
 
 # Create runtime dirs lazily. Doing this at script load leaked side effects to
 # read-only commands (help, version, uninstall --dry-run) and, combined with
@@ -1106,6 +1115,64 @@ optimizer_update_summary() {
     printf ' (run: apx optimizer latest)\n'
   fi
 }
+
+advisory_file_sha256() {
+  local path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+  else
+    python3 - "$path" <<'PY'
+import hashlib
+import pathlib
+import sys
+print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+  fi
+}
+
+advisory_policy_revision() {
+  python3 - "$1" <<'PY'
+import json
+import sys
+try:
+    print(int(json.load(open(sys.argv[1], encoding="utf-8"))["revision"]))
+except (OSError, ValueError, KeyError, TypeError):
+    print(0)
+PY
+}
+
+advisory_sync() (
+  [[ "${APX_ADVISORY_CHECK:-1}" == "1" ]] || {
+    echo "advisory refresh disabled by APX_ADVISORY_CHECK=0" >&2
+    return 1
+  }
+  command -v curl >/dev/null 2>&1 || { echo "advisory refresh requires curl" >&2; return 1; }
+  [[ -x "$ADVISORY_HELPER" ]] || { echo "advisory validator unavailable: $ADVISORY_HELPER" >&2; return 1; }
+  case "$ADVISORY_POLICY_URL" in http://*) [[ "${APX_ADVISORY_ALLOW_HTTP:-0}" == "1" ]] || { echo "refusing non-HTTPS advisory URL" >&2; return 1; } ;; esac
+  case "$ADVISORY_POLICY_SHA_URL" in http://*) [[ "${APX_ADVISORY_ALLOW_HTTP:-0}" == "1" ]] || { echo "refusing non-HTTPS advisory checksum URL" >&2; return 1; } ;; esac
+  mkdir -p "$STATE_DIR"
+  local tmp_dir policy checksum expected actual current_revision incoming_revision
+  tmp_dir="$(mktemp -d "$STATE_DIR/advisory-download.XXXXXX")" || return 1
+  trap 'rm -rf "$tmp_dir"' EXIT
+  policy="$tmp_dir/current.json"
+  checksum="$tmp_dir/current.json.sha256"
+  curl -fsSL --max-time 10 --max-filesize 262144 "$ADVISORY_POLICY_URL" -o "$policy"
+  curl -fsSL --max-time 10 --max-filesize 4096 "$ADVISORY_POLICY_SHA_URL" -o "$checksum"
+  expected="$(awk 'NR == 1 { print $1 }' "$checksum")"
+  [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "invalid advisory checksum document" >&2; return 1; }
+  expected="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
+  actual="$(advisory_file_sha256 "$policy")"
+  [[ "$actual" == "$expected" ]] || { echo "advisory checksum mismatch" >&2; return 1; }
+  "$ADVISORY_HELPER" validate "$policy" >/dev/null
+  incoming_revision="$(advisory_policy_revision "$policy")"
+  current_revision="$(advisory_policy_revision "$ADVISORY_CACHE_FILE")"
+  (( incoming_revision >= current_revision )) || { echo "refusing advisory policy rollback" >&2; return 1; }
+  chmod 600 "$policy"
+  mv "$policy" "$ADVISORY_CACHE_FILE"
+  printf 'advisory policy updated: revision %s\n' "$incoming_revision"
+)
 
 # --- configuration advisor -------------------------------------------------
 #

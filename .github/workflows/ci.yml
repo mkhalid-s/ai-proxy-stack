@@ -40,6 +40,7 @@ jobs:
           bash -n build/header.sh
           bash -n build/release.sh
           bash -n tests/lifecycle.sh
+          bash -n tests/advisory-policy.sh
 
       - name: Shellcheck
         run: |
@@ -52,12 +53,14 @@ jobs:
             build/pack.sh \
             build/header.sh \
             build/release.sh \
-            tests/lifecycle.sh
+            tests/lifecycle.sh \
+            tests/advisory-policy.sh
 
       - name: Python compile
         run: |
-          python -m py_compile bin/apx-gateway build/release-notes.py tests/security_properties.py fuzz/gateway_boundaries_fuzzer.py
+          python -m py_compile bin/apx-gateway bin/apx-advisory build/release-notes.py tests/security_properties.py fuzz/gateway_boundaries_fuzzer.py
           python tests/security_properties.py
+          bash tests/advisory-policy.sh
           version="$(tr -d '[:space:]' < VERSION)"
           python build/release-notes.py "$version" CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
           grep -q "^## \[$version\]" "$RUNNER_TEMP/release-notes.md"

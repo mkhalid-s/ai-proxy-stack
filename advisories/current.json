@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "generated_at": "2026-08-01T00:00:00Z",
+  "expires_at": "2026-11-01T00:00:00Z",
+  "advisories": [
+    {
+      "id": "pxpipe-opus-5-image-recall",
+      "guidance_version": 1,
+      "severity": "warning",
+      "category": "correctness",
+      "title": "Review Claude Opus 5 image conversion",
+      "impact": "pxpipe reports weak exact recall for Opus 5 imaged context; keep it enabled only as an informed opt-in.",
+      "condition": {
+        "type": "list_contains",
+        "setting": "PXPIPE_MODELS",
+        "value": "claude-opus-5"
+      },
+      "remediation": {
+        "type": "remove_list_value",
+        "setting": "PXPIPE_MODELS",
+        "value": "claude-opus-5"
+      }
+    }
+  ]
+}

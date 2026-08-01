@@ -9,6 +9,7 @@ let server;
 let baseURL;
 
 const fixture = {
+  advisories: { available: true, revision: 1, advisories: [] },
   summary: {
     totals: { requests: 12, ok: 12, warn_4xx: 0, err_5xx: 0, tokens_in: 1200, tokens_out: 300, cache_read_tokens: 240, cache_write_tokens: 40, cost_est_usd: 0.0425, tool_calls: 5, streams: 10 },
     latency_ms: { p95: 42 },
@@ -58,7 +59,8 @@ test.beforeAll(async () => {
     if (path === "/" || path === "/dashboard") return sendAsset(response, join(root, "share/dashboard.html"), "text/html; charset=utf-8");
     if (path === "/assets/app.js") return sendAsset(response, join(assets, "app.js"), "text/javascript; charset=utf-8");
     if (path === "/assets/app.css") return sendAsset(response, join(assets, "app.css"), "text/css; charset=utf-8");
-    const payload = path === "/api/metrics/summary" ? fixture.summary
+    const payload = path === "/api/advisories" ? fixture.advisories
+      : path === "/api/metrics/summary" ? fixture.summary
       : path === "/api/metrics/attention" ? fixture.attention
         : path === "/api/metrics/timeseries" ? fixture.timeseries
           : path === "/api/metrics/efficiency/timeseries" ? fixture.savings

@@ -8,6 +8,7 @@ import csv
 import hashlib
 import http.client
 import io
+import importlib.machinery
 import json
 import mimetypes
 import os
@@ -36,6 +37,12 @@ from apx_gateway_security import (
     _safe_proxy_request_path,
 )
 
+_ADVISORY_HELPER_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "apx-advisory")
+try:
+    ADVISORY_POLICY = importlib.machinery.SourceFileLoader("apx_advisory_runtime", _ADVISORY_HELPER_PATH).load_module()
+except (FileNotFoundError, ImportError, OSError):
+    ADVISORY_POLICY = None
+
 BIND_HOST = os.environ.get("GATEWAY_HOST") or os.environ.get("HOST") or "127.0.0.1"
 PORT = int(os.environ.get("GATEWAY_PORT", "8787"))
 TARGET_URL = os.environ.get("GATEWAY_TARGET_URL", "https://api.anthropic.com").rstrip("/")
@@ -63,6 +70,8 @@ HEALTH_INTERVAL_SECONDS = float(os.environ.get("APX_HEALTH_INTERVAL_SECONDS", "5
 MAX_LOG_STREAMS_PER_IP = int(os.environ.get("APX_MAX_LOG_STREAMS_PER_IP", "8"))
 MAX_EVENT_STREAMS_PER_IP = int(os.environ.get("APX_MAX_EVENT_STREAMS_PER_IP", "4"))
 MAX_REQUEST_BYTES = int(os.environ.get("APX_MAX_REQUEST_BYTES", str(64 * 1024 * 1024)))
+ADVISORY_CACHE_PATH = os.path.join(STATE_DIR, "advisories.json")
+CONFIG_PROVENANCE_PATH = os.path.join(STATE_DIR, "config-provenance.tsv")
 
 # --- Metrics data plane (0.4.0+) ---------------------------------------------
 CAPTURE_LEVEL = (os.environ.get("APX_CAPTURE", "metadata") or "metadata").strip().lower()
@@ -1933,6 +1942,47 @@ def _api_metrics_optimizer_snapshots(query: dict[str, list[str]]) -> dict[str, A
     return {"window": window, "durable": True, "snapshots": rows}
 
 
+def _config_provenance(setting: str) -> str:
+    try:
+        with open(CONFIG_PROVENANCE_PATH, encoding="utf-8") as stream:
+            for line in stream:
+                fields = line.rstrip("\n").split("\t")
+                if len(fields) >= 2 and fields[0] == setting:
+                    return fields[1]
+    except OSError:
+        pass
+    return "unknown"
+
+
+def _api_advisories() -> dict[str, Any]:
+    """Evaluate the last verified policy locally; never fetch from the gateway."""
+    if ADVISORY_POLICY is None or not os.path.isfile(ADVISORY_CACHE_PATH):
+        return {"available": False, "revision": None, "updated_at": None, "advisories": []}
+    try:
+        policy = ADVISORY_POLICY.load_policy(Path(ADVISORY_CACHE_PATH))
+        active = ADVISORY_POLICY.evaluate(policy, Path(CONFIG_FILE))
+        normalized = []
+        for item in active:
+            setting = str((item.get("condition") or {}).get("setting") or "")
+            normalized.append({
+                "id": str(item.get("id") or "advisory"),
+                "severity": str(item.get("severity") or "info"),
+                "title": str(item.get("title") or "Configuration advisory"),
+                "detail": str(item.get("impact") or "Review this configuration."),
+                "action": str(item.get("remediation_command") or "Run: apx config advise"),
+                "ownership": _config_provenance(setting),
+                "source": "verified-cache",
+            })
+        return {
+            "available": True,
+            "revision": int(policy["revision"]),
+            "updated_at": os.path.getmtime(ADVISORY_CACHE_PATH),
+            "advisories": normalized,
+        }
+    except (OSError, TypeError, ValueError, KeyError):
+        return {"available": False, "revision": None, "updated_at": None, "advisories": []}
+
+
 def _api_metrics_attention(query: dict[str, list[str]]) -> dict[str, Any]:
     """Return conservative, actionable signals derived from persisted telemetry.
 
@@ -2819,6 +2869,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return True
         if path == "/api/metrics/attention":
             self._respond_json(200, _api_metrics_attention(query))
+            return True
+        if path == "/api/advisories":
+            self._respond_json(200, _api_advisories())
             return True
         if path == "/api/metrics/timeseries":
             self._respond_json(200, _api_metrics_timeseries(query))

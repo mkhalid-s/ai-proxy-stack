@@ -21,12 +21,20 @@ s.close()
 PY
 )"
 
+mkdir -p "$TMP/state"
+cp "$ROOT/advisories/current.json" "$TMP/state/advisories.json"
+cat > "$TMP/config.env" <<'EOF'
+PXPIPE_MODELS="claude-fable-5,claude-opus-5"
+EOF
+printf 'PXPIPE_MODELS\tuser-explicit\tfixture\t0.6.5\n' > "$TMP/state/config-provenance.tsv"
+
 start_gateway() {
   APX_DASHBOARD_ENABLED=1 \
   APX_DASHBOARD_TOKEN=dashboard-test-token \
   APX_DASHBOARD_HTML="$ROOT/share/dashboard.html" \
   APX_DASHBOARD_STATIC_DIR="$ROOT/share/dashboard" \
   APX_STATE_DIR="$TMP/state" \
+  APX_CONFIG="$TMP/config.env" \
   APX_HISTORY_DIR="$TMP/history" \
   APX_METRICS_DB="$TMP/state/metrics.db" \
   GATEWAY_HOST=127.0.0.1 \
@@ -71,6 +79,17 @@ grep -q '/proxy/squeezr/' "$TMP/app.js"
 grep -q '.overview .charts' "$TMP/app.css"
 grep -qi '^cache-control: no-cache' "$TMP/asset-headers"
 grep -qi '^cache-control: no-cache' "$TMP/css-headers"
+curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/advisories" -o "$TMP/advisories.json"
+python3 - "$TMP/advisories.json" <<'PY'
+import json
+import sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+assert payload["available"] is True
+assert payload["revision"] == 1
+assert payload["advisories"][0]["id"] == "pxpipe-models-opus-5-enabled"
+assert payload["advisories"][0]["ownership"] == "user-explicit"
+assert payload["advisories"][0]["action"] == "apx pxpipe models set claude-fable-5"
+PY
 
 # Seed only durable, explicit measurements. The overview must never need to
 # infer token savings from aggregate traffic to show its central cards.

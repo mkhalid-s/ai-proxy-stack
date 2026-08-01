@@ -7,6 +7,7 @@
   let windowValue = "1h";
   /** @type {any} */ let summary = {};
   /** @type {{ alerts: any[] }} */ let attention = { alerts: [] };
+  /** @type {{ advisories: any[], available?: boolean, revision?: number }} */ let advisories = { advisories: [] };
   /** @type {any[]} */ let series = [];
   /** @type {any[]} */ let optimizerSnapshots = [];
   /** @type {{ observed?: any, optimizers?: any[], durable?: boolean, note?: string }} */ let efficiency = {};
@@ -154,6 +155,7 @@
       const requests = [
         { name: "usage", promise: getJSON(`/api/metrics/summary?window=${windowValue}`), apply: (value) => summary = value },
         { name: "attention", promise: getJSON(`/api/metrics/attention?window=${windowValue}`), apply: (value) => attention = value },
+        { name: "configuration advice", promise: getJSON("/api/advisories"), apply: (value) => advisories = value },
         { name: "token trend", promise: getJSON(`/api/metrics/timeseries?window=${windowValue}&bucket=${bucketFor(windowValue)}`), apply: (value) => series = value.series || [] },
         { name: "savings", promise: getJSON(`/api/metrics/efficiency?window=${windowValue}`), apply: (value) => efficiency = value },
         { name: "savings trend", promise: getJSON(`/api/metrics/efficiency/timeseries?window=${windowValue}&bucket=${bucketFor(windowValue)}`), apply: (value) => savingsSeries = value.series || [] },
@@ -248,7 +250,9 @@
       : failures
         ? `${number(failures)} issue${failures === 1 ? "" : "s"}`
         : "Healthy";
-  $: sortedAlerts = [...(attention.alerts || [])].sort((left, right) => {
+  $: sortedAlerts = [...(attention.alerts || []), ...(advisories.advisories || [])]
+    .filter((alert, index, alerts) => alerts.findIndex((candidate) => candidate.id === alert.id) === index)
+    .sort((left, right) => {
     const rank = /** @type {Record<string, number>} */ ({ critical: 0, warning: 1, info: 2 });
     return (rank[left.severity] ?? 3) - (rank[right.severity] ?? 3)
       || String(left.title || "").localeCompare(String(right.title || ""));
@@ -329,19 +333,21 @@
     </p>
   </article>
 
-  <div class:has-signals={attention.alerts?.length} class="attention">
-    <div class="attention-heading"><h3>{attention.alerts?.length ? "Needs attention" : "No action needed"}</h3><span class:ok={!attention.alerts?.length} class:warn={attention.alerts?.some((alert) => alert.severity === "warning")} class:fail={attention.alerts?.some((alert) => alert.severity === "critical")} class="status">{attention.alerts?.length || 0} signals</span></div>
-    {#if attention.alerts?.length}
+  <div class:has-signals={sortedAlerts.length} class="attention">
+    <div class="attention-heading"><h3>{sortedAlerts.length ? "Needs attention" : "No action needed"}</h3><span class:ok={!sortedAlerts.length} class:warn={sortedAlerts.some((alert) => alert.severity === "warning")} class:fail={sortedAlerts.some((alert) => alert.severity === "critical")} class="status">{sortedAlerts.length} signals</span></div>
+    {#if sortedAlerts.length}
       <div class="attention-list">
         {#each visibleAlerts as alert (alert.id)}
           <article class:critical={alert.severity === "critical"} class:warning={alert.severity === "warning"} class="signal">
-            <strong>{alert.title}</strong><small>{alert.detail}</small><em>Next: {alert.action}</em>
+            <strong>{alert.title}</strong><small>{alert.detail}</small>
+            {#if alert.ownership}<small class="signal-origin">Configuration: {alert.ownership}</small>{/if}
+            <em>Next: {alert.action}</em>
           </article>
         {/each}
       </div>
-      {#if attention.alerts.length > 1}
+      {#if sortedAlerts.length > 1}
         <button class="signals-toggle" type="button" aria-expanded={showAllSignals} onclick={() => showAllSignals = !showAllSignals}>
-          {showAllSignals ? "Show only the first signal" : `Review all ${attention.alerts.length} signals`}
+          {showAllSignals ? "Show only the first signal" : `Review all ${sortedAlerts.length} signals`}
         </button>
       {/if}
     {:else}

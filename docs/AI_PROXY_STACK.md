@@ -218,7 +218,7 @@ GATEWAY_CMD="$HOME/.local/bin/apx-gateway"
 SQUEEZR_CMD="$HOME/.local/bin/apx-squeezr"
 SQUEEZR_PACKAGE_SPEC="squeezr-ai@1.99.2"
 PXPIPE_CMD="npx -y pxpipe-proxy@0.11.1"
-PXPIPE_MODELS="claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5"
+PXPIPE_MODELS="claude-fable-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5"
 HEADROOM_CMD="headroom proxy"
 
 WORKDIR="${HOME}"
@@ -286,8 +286,12 @@ pxpipe only converts requests to image blocks for model bases listed in `PXPIPE_
 The pxpipe dashboard chips are runtime-only live overrides. They are useful for quick experiments, but they reset when pxpipe restarts. Keep persistent model policy in `~/.config/apx/config.env`:
 
 ```bash
-PXPIPE_MODELS="claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5"
+PXPIPE_MODELS="claude-fable-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5"
 ```
+
+Claude Opus 5 is supported only as an explicit opt-in. pxpipe's evaluation
+found weak exact recall from Opus 5 imaged context, so apx does not enable that
+correctness tradeoff by default.
 
 Use `PXPIPE_MODELS=off` to disable image conversion while leaving pxpipe running as a pass-through logging/dashboard proxy. pxpipe has no wildcard mode; add future model bases explicitly.
 

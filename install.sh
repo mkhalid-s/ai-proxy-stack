@@ -396,9 +396,16 @@ sync_config() {
     return 0
   fi
 
-  local tmp
+  local tmp old_pxpipe_models new_pxpipe_models
   tmp="$(mktemp)"
   cp "$RUNTIME_CONFIG" "$tmp"
+  old_pxpipe_models='PXPIPE_MODELS="claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,gpt-5.6,gpt-5.5"'
+  new_pxpipe_models="$(grep '^PXPIPE_MODELS=' "$SRC_CONFIG" | head -n 1)"
+  if grep -Fqx "$old_pxpipe_models" "$RUNTIME_CONFIG"; then
+    awk -v old="$old_pxpipe_models" -v new="$new_pxpipe_models" \
+      '{ if ($0 == old) print new; else print }' "$RUNTIME_CONFIG" > "$tmp"
+    log "migrated the previous apx pxpipe model default; Claude Opus 5 remains available as an explicit opt-in"
+  fi
   awk -F= '
     FNR == NR {
       if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*=/) seen[$1] = 1

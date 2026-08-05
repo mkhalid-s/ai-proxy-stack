@@ -189,17 +189,17 @@ if [[ "$advisor_json" == *'"id":"insecure-upstream"'* ]]; then
 fi
 "$APX" target set https://api.anthropic.com --no-restart >/dev/null
 
-# The pxpipe action is safe only when the configured chain enables pxpipe and
-# image conversion is not intentionally disabled.
-"$APX" pxpipe models set claude-fable-5 --no-restart >/dev/null
+# Opus 5 image conversion is now an informed opt-in. The advisor offers an
+# explicit, reversible removal only when pxpipe is enabled.
+"$APX" pxpipe models set claude-fable-5,claude-opus-5 --no-restart >/dev/null
 "$APX" mode pxpipe --no-restart --no-claude-sync >/dev/null
 advisor_json="$("$APX" config advise --json)"
-if [[ "$advisor_json" != *'"id":"pxpipe-models-missing-opus-5"'* || "$advisor_json" != *'"safe_to_apply":true'* ]]; then
-  echo "ERROR: config advisor did not report pxpipe model drift as safely applicable" >&2
+if [[ "$advisor_json" != *'"id":"pxpipe-models-opus-5-enabled"'* || "$advisor_json" != *'"safe_to_apply":true'* ]]; then
+  echo "ERROR: config advisor did not report the Opus 5 exact-recall risk" >&2
   exit 1
 fi
-"$APX" config advise --dismiss pxpipe-models-missing-opus-5 >/dev/null
-if grep -q 'Add Claude Opus 5' <<<"$("$APX" config advise)"; then
+"$APX" config advise --dismiss pxpipe-models-opus-5-enabled >/dev/null
+if grep -q 'Review Claude Opus 5' <<<"$("$APX" config advise)"; then
   echo "ERROR: dismissed configuration advisory was still active" >&2
   exit 1
 fi
@@ -208,9 +208,9 @@ if [[ "$advisor_all" != *'Status: dismissed'* ]]; then
   echo "ERROR: config advisor did not show dismissed advisory on request" >&2
   exit 1
 fi
-"$APX" config advise --apply-safe pxpipe-models-missing-opus-5 >/dev/null
-grep -q '^PXPIPE_MODELS="claude-fable-5,claude-opus-5"$' "$APX_CONFIG"
-if [[ "$("$APX" optimizer pxpipe models get)" != "PXPIPE_MODELS=claude-fable-5,claude-opus-5" ]]; then
+"$APX" config advise --apply-safe pxpipe-models-opus-5-enabled >/dev/null
+grep -q '^PXPIPE_MODELS="claude-fable-5"$' "$APX_CONFIG"
+if [[ "$("$APX" optimizer pxpipe models get)" != "PXPIPE_MODELS=claude-fable-5" ]]; then
   echo "ERROR: grouped optimizer pxpipe command did not preserve the applied allowlist" >&2
   exit 1
 fi

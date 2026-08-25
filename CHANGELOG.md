@@ -6,11 +6,19 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-08-25
+
 ### Fixed
 
 - Claude Opus 5 image conversion is now opt-in after pxpipe reported weak exact
   recall from imaged context. Fresh installs and untouched legacy apx defaults
   exclude it; customized model allowlists remain unchanged.
+
+### Changed
+
+- Dashboard build dependencies were updated to address a high-severity `nanoid`
+  advisory and bring Vite, Svelte, Playwright, and related tooling to current
+  patch/minor releases.
 
 ## [0.6.4] - 2026-07-31
 

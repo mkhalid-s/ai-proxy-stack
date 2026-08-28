@@ -583,4 +583,92 @@ git init -q --bare "$finalize_release_origin"
   [[ "$(git --git-dir="$finalize_release_origin" rev-parse refs/tags/v1.2.4)" == "$(git rev-parse HEAD)" ]]
 )
 
+# ---- New coverage: restart, doctor, chain get/clear, target get/reset, completions bash/fish ----
+
+# The foreign-PID test above leaves a stale supervisor.pid (the sleep proc's pid).
+# If that pid is recycled by the OS before we reach here, nohup_start would
+# incorrectly report "supervisor already running". Clear it first.
+rm -f "$APX_RUN_DIR/supervisor.pid"
+
+"$APX" start >/dev/null
+wait_livez
+
+# apx restart: gateway must remain reachable after a stop+start cycle
+"$APX" restart >/dev/null
+wait_livez
+
+# apx doctor: must include security posture and commands sections
+doctor_out="$("$APX" doctor 2>&1)"
+if [[ "$doctor_out" != *"security posture"* ]]; then
+  echo "ERROR: doctor output missing 'security posture' section" >&2
+  exit 1
+fi
+if [[ "$doctor_out" != *"commands"* ]]; then
+  echo "ERROR: doctor output missing 'commands' section" >&2
+  exit 1
+fi
+if [[ "$doctor_out" != *"durable metrics"* ]]; then
+  echo "ERROR: doctor output missing 'durable metrics' field" >&2
+  exit 1
+fi
+
+"$APX" stop >/dev/null
+
+# chain get: must include chain, mode, and hops fields
+"$APX" chain set headroom --no-restart --no-claude-sync >/dev/null
+chain_out="$("$APX" chain get)"
+if [[ "$chain_out" != *"chain:"* ]]; then
+  echo "ERROR: chain get missing 'chain:' field" >&2
+  exit 1
+fi
+if [[ "$chain_out" != *"mode:"* ]]; then
+  echo "ERROR: chain get missing 'mode:' field" >&2
+  exit 1
+fi
+if [[ "$chain_out" != *"hops:"* ]]; then
+  echo "ERROR: chain get missing 'hops:' field" >&2
+  exit 1
+fi
+
+# chain clear: clears APX_CHAIN from config
+"$APX" chain clear --no-restart --no-claude-sync >/dev/null
+if grep -q '^APX_CHAIN="headroom"$' "$APX_CONFIG"; then
+  echo "ERROR: chain clear did not clear the headroom chain" >&2
+  exit 1
+fi
+
+# target get: must show current target URL
+"$APX" target set https://api.anthropic.com --no-restart >/dev/null
+target_out="$("$APX" target get)"
+if [[ "$target_out" != *"api.anthropic.com"* ]]; then
+  echo "ERROR: target get did not show current target URL" >&2
+  exit 1
+fi
+
+# target reset: must restore the default Anthropic API URL
+"$APX" target set http://example.com --no-restart >/dev/null
+"$APX" target reset --no-restart >/dev/null
+if ! grep -q 'api.anthropic.com' "$APX_CONFIG"; then
+  echo "ERROR: target reset did not restore api.anthropic.com" >&2
+  exit 1
+fi
+
+# completions bash: must include the completion function and complete directive
+bash_completion="$("$APX" completions bash)"
+if [[ "$bash_completion" != *"_apx_completions"* ]]; then
+  echo "ERROR: bash completions missing '_apx_completions' function" >&2
+  exit 1
+fi
+if [[ "$bash_completion" != *"complete -F _apx_completions apx"* ]]; then
+  echo "ERROR: bash completions missing 'complete -F _apx_completions apx' line" >&2
+  exit 1
+fi
+
+# completions fish: must include fish-style complete directives for apx
+fish_completion="$("$APX" completions fish)"
+if [[ "$fish_completion" != *"complete -c apx"* ]]; then
+  echo "ERROR: fish completions missing 'complete -c apx' directive" >&2
+  exit 1
+fi
+
 echo lifecycle-ok

@@ -6,6 +6,33 @@ All notable changes to LeanRelay (`apx`) are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-08-29
+
+### Fixed
+
+- `nohup_stop` now waits up to 15 seconds for the supervisor process to exit
+  and up to 10 seconds for `supervisor.lock` to be released before proceeding.
+  Previously, the 2-second deadline was too short on loaded CI runners:
+  `acquire_supervisor_lock` in a freshly spawned supervisor could find a stale
+  lock left by a supervisor still stopping its children, causing a false
+  "supervisor already running" error and a failed `wait_livez` health check.
+
+### Added
+
+- `tests/gateway_unit.py`: 9 direct unit tests for `bin/apx-gateway` pure
+  functions — `_percentile`, `_window_seconds`, `_bucket_seconds`,
+  `_bounded_int`, `_cost_estimate`, `_redact_headers`, `_redact_json_value`,
+  `_redact_secrets_in_text`, and `_scrub_url_path`.
+- `tests/lifecycle.sh`: 6 new subcommand assertions — `apx doctor` (security
+  posture, durable metrics, and commands sections), `apx chain get` and
+  `apx chain clear`, `apx target get` and `apx target reset`, and
+  `apx completions bash` / `apx completions fish` structural checks.
+- `tests/dashboard.sh`: 6 new API endpoint assertions — `/api/history`
+  (durable flag and fixture row fields), model and status filters,
+  `/api/history/export.csv` (headers and row content),
+  `/api/metrics/chains` (per-chain fields and observational regression),
+  and `/api/metrics/sessions` (session grouping and token totals).
+
 ## [0.6.5] - 2026-08-25
 
 ### Fixed

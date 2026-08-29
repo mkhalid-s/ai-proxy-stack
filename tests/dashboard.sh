@@ -212,4 +212,81 @@ for invalid in (
     assert normalized["tokens_saved"] is None
 PY
 
+# ---- New coverage: /api/history, CSV export, /api/metrics/chains, /api/metrics/sessions ----
+
+# /api/history: durable history must return the seeded fixture row
+curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/history?n=10" -o "$TMP/history.json"
+python3 - "$TMP/history.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+assert d["durable"] is True, f"expected durable=True, got {d.get('durable')}"
+assert len(d["items"]) >= 1, "expected at least 1 history item"
+item = next(i for i in d["items"] if i.get("request_id") == "fixture-request")
+assert item["model"] == "claude-sonnet-5"
+assert item["path"] == "/v1/messages"
+assert item["status"] == 200
+assert item["tokens_in"] == 1200
+PY
+
+# /api/history: model filter returns only matching rows
+curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/history?model=nonexistent-model-xyz" -o "$TMP/history-filtered.json"
+python3 - "$TMP/history-filtered.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+assert len(d["items"]) == 0, f"expected 0 items for unknown model, got {len(d['items'])}"
+PY
+
+# /api/history: status=2xx filter returns only 2xx rows
+curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/history?status=2xx" -o "$TMP/history-2xx.json"
+python3 - "$TMP/history-2xx.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+assert all(200 <= item["status"] <= 399 for item in d["items"]), "non-2xx item returned by status=2xx filter"
+assert len(d["items"]) >= 1, "expected at least 1 item for status=2xx"
+PY
+
+# /api/history/export.csv: CSV export must include fixture row with correct headers
+curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/history/export.csv" -o "$TMP/history.csv"
+python3 - "$TMP/history.csv" <<'PY'
+import csv, io, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+rows = list(csv.DictReader(io.StringIO(text)))
+assert len(rows) >= 1, f"expected at least 1 CSV row, got {len(rows)}"
+required_cols = {"model", "status", "tokens_in", "tokens_out", "path", "request_id"}
+missing = required_cols - set(rows[0].keys())
+assert not missing, f"CSV missing columns: {missing}"
+fixture = next((r for r in rows if r.get("request_id") == "fixture-request"), None)
+assert fixture is not None, "fixture-request not found in CSV export"
+assert fixture["model"] == "claude-sonnet-5"
+assert fixture["status"] == "200"
+PY
+
+# /api/metrics/chains: must return chains list with expected fields and durable flag
+curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/chains?window=1h" -o "$TMP/chains.json"
+python3 - "$TMP/chains.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+assert d["durable"] is True, f"expected durable=True, got {d.get('durable')}"
+assert "chains" in d, "response missing 'chains' key"
+assert len(d["chains"]) >= 1, "expected at least 1 chain entry"
+chain = d["chains"][0]
+for field in ("chain_mode", "requests", "error_rate_pct", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "observational_regression"):
+    assert field in chain, f"chain entry missing field: {field}"
+PY
+
+# /api/metrics/sessions: must return the fixture session with correct token counts
+curl -fsS -b "$TMP/cookies" "http://127.0.0.1:$PORT/api/metrics/sessions?window=1h" -o "$TMP/sessions.json"
+python3 - "$TMP/sessions.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+assert "sessions" in d, "response missing 'sessions' key"
+assert "count" in d, "response missing 'count' key"
+sessions = d["sessions"]
+fixture = next((s for s in sessions if s.get("session_id") == "fixture-session"), None)
+assert fixture is not None, "fixture-session not found in /api/metrics/sessions"
+assert fixture["requests"] >= 1
+assert fixture["tokens_in"] == 1200
+assert fixture["tokens_out"] == 300
+PY
+
 echo dashboard-ok

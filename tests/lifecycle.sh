@@ -585,19 +585,27 @@ git init -q --bare "$finalize_release_origin"
 
 # ---- New coverage: restart, doctor, chain get/clear, target get/reset, completions bash/fish ----
 
-# The foreign-PID test above leaves a stale supervisor.pid (the sleep proc's pid).
-# If that pid is recycled by the OS before we reach here, nohup_start would
-# incorrectly report "supervisor already running". Clear it first.
-rm -f "$APX_RUN_DIR/supervisor.pid"
+# Helper: wait for supervisor.lock to be released, then force-clear stale state.
+# nohup_stop only waits 2s for the supervisor to exit, but the supervisor's own
+# cleanup (stopping children + rm -rf supervisor.lock) can outlast that window.
+# The new supervisor spawned by nohup_start then fails acquire_supervisor_lock
+# because the stale lock dir still exists. This helper makes starts deterministic.
+wait_supervisor_released() {
+  local _
+  for _ in $(seq 1 20); do
+    [[ -d "$APX_RUN_DIR/supervisor.lock" ]] || break
+    sleep 1
+  done
+  rm -f  "$APX_RUN_DIR/supervisor.pid"
+  rm -rf "$APX_RUN_DIR/supervisor.lock"
+}
+
+wait_supervisor_released
 
 "$APX" start >/dev/null
 wait_livez
 
-# apx restart: gateway must remain reachable after a stop+start cycle
-"$APX" restart >/dev/null
-wait_livez
-
-# apx doctor: must include security posture and commands sections
+# apx doctor: must include security posture and commands sections (gateway running)
 doctor_out="$("$APX" doctor 2>&1)"
 if [[ "$doctor_out" != *"security posture"* ]]; then
   echo "ERROR: doctor output missing 'security posture' section" >&2
@@ -612,7 +620,13 @@ if [[ "$doctor_out" != *"durable metrics"* ]]; then
   exit 1
 fi
 
+# apx restart: gateway must remain reachable after a stop+start cycle.
+# Call restart on the already-running gateway (avoids an extra start/stop pair).
+"$APX" restart >/dev/null
+wait_livez
+
 "$APX" stop >/dev/null
+wait_supervisor_released
 
 # chain get: must include chain, mode, and hops fields
 "$APX" chain set headroom --no-restart --no-claude-sync >/dev/null

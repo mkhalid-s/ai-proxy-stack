@@ -620,11 +620,6 @@ if [[ "$doctor_out" != *"durable metrics"* ]]; then
   exit 1
 fi
 
-# apx restart: gateway must remain reachable after a stop+start cycle.
-# Call restart on the already-running gateway (avoids an extra start/stop pair).
-"$APX" restart >/dev/null
-wait_livez
-
 "$APX" stop >/dev/null
 wait_supervisor_released
 

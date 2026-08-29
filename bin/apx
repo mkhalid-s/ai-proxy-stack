@@ -795,8 +795,8 @@ nohup_stop() {
   # Wait for the (possibly still-exiting) supervisor's own cleanup, which
   # removes supervisor.lock, so a subsequent start does not race
   # acquire_supervisor_lock against a lock that hasn't been released yet.
-  local j
-  for j in $(seq 1 100); do [[ -d "$SUPERVISOR_LOCK_DIR" ]] || break; sleep 0.1; done
+  local _j
+  for _j in $(seq 1 100); do [[ -d "$SUPERVISOR_LOCK_DIR" ]] || break; sleep 0.1; done
   stop_children
   rm -f "$RUN_DIR/supervisor.pid"
   rm -rf "$SUPERVISOR_LOCK_DIR"

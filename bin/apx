@@ -784,11 +784,22 @@ nohup_stop() {
   spid="$(read_pid "$RUN_DIR/supervisor.pid")"
   if pid_alive "$spid" && [[ "$(proc_cmd "$spid")" == *"apx supervisor"* ]]; then
     kill "$spid" 2>/dev/null || true
+    # supervisor_cleanup stops up to four owned child processes, each of
+    # which may need up to ~2s (kill, sleep 2, kill -9 fallback) before this
+    # process actually exits and releases supervisor.lock. A short (2s)
+    # wait here let the next `apx start`/`apx restart` race the still-
+    # exiting supervisor and fail with "already running".
     local i
-    for i in {1..20}; do pid_alive "$spid" || break; sleep 0.1; done
+    for i in $(seq 1 150); do pid_alive "$spid" || break; sleep 0.1; done
   fi
+  # Wait for the (possibly still-exiting) supervisor's own cleanup, which
+  # removes supervisor.lock, so a subsequent start does not race
+  # acquire_supervisor_lock against a lock that hasn't been released yet.
+  local j
+  for j in $(seq 1 100); do [[ -d "$SUPERVISOR_LOCK_DIR" ]] || break; sleep 0.1; done
   stop_children
   rm -f "$RUN_DIR/supervisor.pid"
+  rm -rf "$SUPERVISOR_LOCK_DIR"
   echo "stopped"
 }
 
